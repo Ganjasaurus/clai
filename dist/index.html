@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CLAI — RetroFleshed</title>
+  <style>
+    :root {
+      --bg: #080b0a;
+      --surface: #101714;
+      --border: #284237;
+      --text: #b8f5d0;
+      --muted: #84a593;
+      --accent: #4af2a1;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      background: radial-gradient(circle at center, #11211a 0%, var(--bg) 75%);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .card {
+      max-width: 560px;
+      width: 100%;
+      background: var(--surface);
+      border: 2px solid var(--border);
+      padding: 2.5rem;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-size: 0.75rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: 2.5rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+    }
+    p {
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+    .back-link {
+      display: inline-block;
+      padding: 0.75rem 1.5rem;
+      background: var(--accent);
+      color: var(--bg);
+      text-decoration: none;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+    }
+    .back-link:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <span class="badge">In Development</span>
+    <h1>CLAI</h1>
+    <p>Standalone Cloudflare Worker live endpoint connected to RetroFleshed.</p>
+    <a class="back-link" href="https://retrofleshed.com/#games">← Back to RetroFleshed</a>
+  </main>
+</body>
+</html>
