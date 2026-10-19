@@ -1,80 +1,55 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CLAI — RetroFleshed</title>
-  <style>
-    :root {
-      --bg: #080b0a;
-      --surface: #101714;
-      --border: #284237;
-      --text: #b8f5d0;
-      --muted: #84a593;
-      --accent: #4af2a1;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      min-height: 100vh;
-      background: radial-gradient(circle at center, #11211a 0%, var(--bg) 75%);
-      color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-    }
-    .card {
-      max-width: 560px;
-      width: 100%;
-      background: var(--surface);
-      border: 2px solid var(--border);
-      padding: 2.5rem;
-      text-align: center;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-    }
-    .badge {
-      display: inline-block;
-      padding: 0.25rem 0.75rem;
-      border: 1px solid var(--accent);
-      color: var(--accent);
-      font-size: 0.75rem;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      margin-bottom: 1rem;
-    }
-    h1 {
-      font-size: 2.5rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      margin-bottom: 0.75rem;
-    }
-    p {
-      color: var(--muted);
-      line-height: 1.6;
-      margin-bottom: 2rem;
-    }
-    .back-link {
-      display: inline-block;
-      padding: 0.75rem 1.5rem;
-      background: var(--accent);
-      color: var(--bg);
-      text-decoration: none;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      font-size: 0.85rem;
-    }
-    .back-link:hover { opacity: 0.9; }
-  </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f6f2">
+  <meta name="description" content="Meet clai, your little clay playground. Squish, stretch, smooth and paint in a friendly 3D studio, right in your browser.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>clai · your little clay playground</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <main class="card">
-    <span class="badge">In Development</span>
-    <h1>CLAI</h1>
-    <p>Standalone Cloudflare Worker live endpoint connected to RetroFleshed.</p>
-    <a class="back-link" href="https://retrofleshed.com/#games">← Back to RetroFleshed</a>
+<div id="app">
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="clai home"><img src="./favicon.svg" alt="" width="38" height="38"><span>clai<span class="brand-dot">.</span></span></a>
+    <span class="brand-caption">your little clay playground</span>
+    <div class="project-name"><label class="name-field"><input id="project-name" aria-label="Name your creation" value="A ball of possibility" maxlength="40" spellcheck="false"><svg class="icon small"><use href="./icons.svg#pencil"/></svg></label><span id="save-status"><i></i>Saved on this device</span></div>
+    <div class="header-actions"><button class="button quiet" id="open-shelf"><svg class="icon"><use href="./icons.svg#shelf"/></svg><span>My shelf</span></button><button class="button primary" id="keep"><svg class="icon"><use href="./icons.svg#save"/></svg><span>Keep it</span></button></div>
+  </header>
+  <main id="workspace" class="workspace" aria-label="Clay modeling studio">
+    <div class="canvas-top"><span class="studio-tag"><span class="live-dot"></span> FREE TO PLAY. FREE TO MAKE.</span><div class="canvas-actions"><button class="icon-button" id="help" title="How to play" aria-label="How to play"><svg class="icon"><use href="./icons.svg#help"/></svg></button><button class="icon-button" id="fullscreen" title="Full screen" aria-label="Enter full screen"><svg class="icon"><use href="./icons.svg#expand"/></svg></button></div></div>
+    <div id="viewport" aria-label="3D clay canvas. Drag on clay to sculpt; drag the background to look around." role="application" tabindex="0"></div>
+    <div id="loading"><span class="loading-clay"></span><span>Warming up the clay…</span></div>
+    <div class="canvas-intro" id="intro"><span class="eyebrow">MEET YOUR NEXT LITTLE IDEA</span><h1>Make a little<br><em>something.</em></h1><p>A squish here. A stretch there.<br>See where your hands take you.</p><span class="sketch-arrow" aria-hidden="true">⤴</span></div>
+    <nav class="tool-rail panel" aria-label="Clay tools">
+      <span class="rail-caption">TOOLS</span>
+      <button class="tool active" data-tool="push" aria-pressed="true" title="Squish · 1"><svg class="icon"><use href="./icons.svg#push"/></svg><span>Squish</span><kbd>1</kbd></button>
+      <button class="tool" data-tool="pull" aria-pressed="false" title="Stretch · 2"><svg class="icon"><use href="./icons.svg#pull"/></svg><span>Stretch</span><kbd>2</kbd></button>
+      <button class="tool" data-tool="grow" aria-pressed="false" title="Grow · 3"><svg class="icon"><use href="./icons.svg#grow"/></svg><span>Grow</span><kbd>3</kbd></button>
+      <button class="tool" data-tool="smooth" aria-pressed="false" title="Smooth · 4"><svg class="icon"><use href="./icons.svg#smooth"/></svg><span>Smooth</span><kbd>4</kbd></button>
+      <button class="tool" data-tool="paint" aria-pressed="false" title="Paint · 5"><svg class="icon"><use href="./icons.svg#paint"/></svg><span>Paint</span><kbd>5</kbd></button>
+      <button class="tool" id="add-shape" aria-pressed="false" title="Add a blended shape · 7"><svg class="icon"><use href="./icons.svg#blend"/></svg><span>Shapes</span><kbd>7</kbd></button>
+      <div class="rail-divider"></div>
+      <button class="tool" id="reset-shape" title="Return to a ball · 6" aria-label="Return to a ball" aria-busy="false"><svg class="icon"><use href="./icons.svg#reset"/></svg><span>Reset</span><kbd>6</kbd></button>
+    </nav>
+    <aside class="brush-panel panel" aria-label="Brush settings"><div class="brush-heading"><span class="brush-preview" id="brush-preview"></span><div><strong id="tool-title">A little squish</strong><span id="tool-subtitle">Press the clay inward</span></div></div><div class="range-label"><label id="brush-size-label" for="brush-size">Brush size</label><output id="brush-size-value">M</output></div><input id="brush-size" type="range" min="12" max="80" value="42" aria-label="Brush size"><button id="mirror" class="mirror-button" aria-pressed="false"><svg class="icon small"><use href="./icons.svg#mirror"/></svg><span>Mirror magic</span><span class="toggle" aria-hidden="true"></span></button></aside>
+    <div class="view-controls panel"><button class="icon-button" id="zoom-out" title="Zoom out" aria-label="Zoom out"><svg class="icon"><use href="./icons.svg#minus"/></svg></button><button class="zoom-reset" id="reset-view" title="Reset view">100<span>%</span></button><button class="icon-button" id="zoom-in" title="Zoom in" aria-label="Zoom in"><svg class="icon"><use href="./icons.svg#plus"/></svg></button><span class="mini-divider"></span><button class="icon-button" id="spin" title="Pottery wheel · keep turning as you make" aria-label="Turn pottery wheel on" aria-pressed="false"><svg class="icon"><use href="./icons.svg#orbit"/></svg></button></div>
+    <div class="creation-label" id="creation-label"><span class="tiny-star">✳</span><span>Made of clay.<br><strong>And a little curiosity.</strong></span></div>
+    <div class="history panel"><button class="icon-button" id="undo" disabled title="Undo · Ctrl/⌘ Z" aria-label="Undo"><svg class="icon"><use href="./icons.svg#undo"/></svg></button><button class="icon-button" id="redo" disabled title="Redo · Ctrl/⌘ Shift Z" aria-label="Redo"><svg class="icon"><use href="./icons.svg#redo"/></svg></button></div>
+    <div class="bottom-dock">
+      <div class="colors panel" role="group" aria-label="Clay colors"><span class="color-caption">A LITTLE<br><strong>COLOR</strong></span><div id="swatches"></div><label class="custom-color" title="Mix your own color"><input type="color" id="custom-color" value="#f47d4d" aria-label="Mix your own color"><svg class="icon small"><use href="./icons.svg#plus"/></svg></label></div>
+      <button id="new-clay" class="button new-clay"><svg class="icon"><use href="./icons.svg#plus"/></svg><span>New clay</span></button>
+    </div>
+    <div class="gesture-hint" id="gesture-hint"><svg class="icon small"><use href="./icons.svg#hand"/></svg><span>Drag clay to squish <b>·</b> Drag the space to turn <b>·</b> Pinch to zoom</span></div>
   </main>
+  <footer class="footer"><span><span class="footer-dot"></span> No rules. Just play.</span><span class="footer-right">A tiny studio for big imaginations <svg class="icon small"><use href="./icons.svg#spark"/></svg></span></footer>
+</div>
+<dialog id="modal"><div class="modal-top"><span id="modal-eyebrow" class="eyebrow">YOUR LITTLE STUDIO</span><button class="icon-button" id="close-modal" aria-label="Close dialog"><svg class="icon"><use href="./icons.svg#close"/></svg></button></div><div id="modal-content"></div></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<input id="import-file" type="file" accept=".clai,application/json" hidden>
+<noscript><div class="no-script">Clai needs JavaScript to bring your clay to life. Enable JavaScript, then reload.</div></noscript>
+<script type="module" src="./app.js"></script>
 </body>
 </html>

@@ -1,9 +1,15 @@
 {
   "name": "clai",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "build": "node -e \"console.log('Static dist ready')\"",
-    "deploy": "wrangler deploy"
+    "build": "npm run check",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check dist/app.js && node --check dist/sculpt.js && node --check dist/studio.js && node --check dist/primitives.js"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "6.2.6",
+    "linkedom": "0.18.13"
   }
 }
