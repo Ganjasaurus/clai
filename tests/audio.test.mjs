@@ -40,3 +40,26 @@ test('missing audio support fails quietly without enabling a sound toggle',async
   const old=globalThis.AudioContext,oldWebkit=globalThis.webkitAudioContext;globalThis.AudioContext=undefined;globalThis.webkitAudioContext=undefined;
   try{const a=new ClayAudio();assert.equal(await a.set('music',true),false);assert.equal(a.music,false);assert.equal(a.context,null);a.dispose();}finally{globalThis.AudioContext=old;globalThis.webkitAudioContext=oldWebkit;}
 });
+
+test('a first brush sound waits for unlock, and interrupted Safari audio can resume',async()=>{
+  const previous=globalThis.AudioContext,{Audio,nodes}=fakeAudio();globalThis.AudioContext=Audio;const a=new ClayAudio();
+  try{
+    await a.set('effects',true);a.context.state='interrupted';let resumed=0;
+    a.context.resume=async()=>{resumed++;await Promise.resolve();a.context.state='running';};
+    a.sound('grow');a.sound('pull');await a.soundUnlock;
+    assert.equal(resumed,1);assert.equal(nodes.length,1,'one queued tool sound survives the async unlock');
+    a.pause();assert.equal(a.voices.size,0,'suspended voices cannot exhaust the voice budget');
+    for(let i=0;i<20;i++){await a.resume();a.sound('push');a.pause();}
+    assert.equal(a.voices.size,0);assert.equal(nodes.length,21);
+    await a.resume();a.setVolume(.9);assert.equal(a.volume,.9);a.sound('paint');assert.equal(nodes.length,22);
+  }finally{a.dispose();globalThis.AudioContext=previous;}
+});
+
+test('blocked resume reports failure and disposal cancels a queued sound',async()=>{
+  const previous=globalThis.AudioContext,{Audio,nodes}=fakeAudio();globalThis.AudioContext=Audio;const a=new ClayAudio();
+  try{
+    const resume=Audio.prototype.resume;Audio.prototype.resume=async()=>{};
+    assert.equal(await a.set('effects',true),false);assert.equal(a.effects,false);assert.equal(nodes.length,0);
+    Audio.prototype.resume=resume;await a.set('effects',true);a.context.state='suspended';a.sound('push');a.dispose();await a.soundUnlock;assert.equal(nodes.length,0);
+  }finally{a.dispose();globalThis.AudioContext=previous;}
+});

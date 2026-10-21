@@ -32,3 +32,93 @@
 @media(max-height:660px) and (min-width:621px){.tool-rail .tool{height:3.25rem}}
 @media(orientation:landscape) and (max-height:480px) and (min-height:366px){.tool-rail{gap:0;padding:.2rem}.tool-rail .tool{height:2.8rem}.tool-rail .rail-divider{margin:.1rem}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* Tool folders: one non-modal pullout, with the canvas always reachable. */
+[hidden]{display:none!important}
+.tool-rail{width:5rem;padding:.6rem .35rem;gap:.25rem}
+.tool-rail .tool{width:4.15rem;height:3.65rem;min-height:44px;font-size:.66rem;gap:.28rem}
+.rail-caption{margin-bottom:.3rem}
+.folder-notch{position:absolute;right:.35rem;bottom:.4rem;width:0;height:0;border-style:solid;border-width:0 0 5px 5px;border-color:transparent transparent currentColor transparent;opacity:.45;transition:transform .2s}
+.tool[aria-expanded=true]{background:#e9ecdf;box-shadow:inset 0 0 0 1px #cbd3bb}
+.tool[aria-expanded=true] .folder-notch{transform:rotate(-90deg)}
+#cut-tools{--folder-color:#4d83a9}#finish-tools{--folder-color:#647f45}#paint-tools{--folder-color:#9a6caa}
+.tool:not(.active):hover{color:var(--folder-color,#c35f35)}
+.current-color{display:block;width:1.8rem;height:1.8rem;border-radius:50%;background:#ed8857;box-shadow:inset -3px -3px 5px #0002,inset 2px 2px 3px #fff7,0 0 0 2px #fff,0 0 0 3px #d7d8cf}
+.tool-drawer{position:absolute;z-index:9;width:312px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#c9cebe transparent;padding:16px;border-radius:20px;background:#fffefb;box-shadow:0 14px 38px #34402b24,0 3px 0 #d3d6c5;animation:drawer-slide .2s cubic-bezier(.2,.8,.3,1)}
+@keyframes drawer-slide{from{opacity:0;transform:translateX(-9px) scale(.98)}to{opacity:1;transform:none}}
+.drawer-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}
+.drawer-heading h2{font-size:19px;font-weight:750;letter-spacing:-.6px;margin:4px 0 0}
+.drawer-heading .eyebrow{font-size:8px;letter-spacing:1.5px}
+.drawer-heading .icon-button{width:44px;height:44px;flex-shrink:0;margin-right:-6px;background:#f2f3eb}
+.drawer-hint{font-size:12px;line-height:1.5;color:#727b65;margin:0 0 13px}
+.folder-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.folder-choice{display:flex;align-items:center;justify-content:flex-start;gap:9px;min-height:54px;padding:9px 11px;border:1px solid #e0e3d8;background:#f2f4ea;border-radius:13px;font-size:12px;font-weight:650;box-shadow:0 2px 0 #dce1d1;text-align:left}
+.folder-choice .icon{width:23px;height:23px;color:#6c8557}
+.folder-choice:hover{transform:translateY(-2px);background:#e9efdc}
+.folder-choice.active{background:#fff0e3;border-color:#eebc9b;box-shadow:0 2px 0 #e7ba99;color:#ae4c24}
+.folder-choice.active .icon{color:#d2693e}
+#tool-drawer .brush-panel{position:static;transform:none;display:block;width:auto;margin:16px 0 0;padding:14px 0 0;border:0;border-top:1px solid #e5e6dc;border-radius:0;box-shadow:none;background:none}
+#tool-drawer .brush-heading{display:flex;margin:0 0 12px;gap:9px}
+#tool-drawer .brush-heading strong{font-size:12px}
+#tool-drawer .brush-heading div>span{display:block;font-size:10px;line-height:1.4;margin-top:3px}
+#tool-drawer .brush-preview{width:27px;height:27px}
+#tool-drawer .range-label{display:flex;font-size:11px;gap:8px}
+#tool-drawer .range-label output{display:block;font-size:10px}
+#tool-drawer input[type=range]{display:block;flex:none;width:100%;height:32px;min-width:0;margin:2px 0 8px;touch-action:none}
+#tool-drawer .mirror-button{display:flex;width:100%;min-height:44px;font-size:12px;gap:8px;border:0;border-top:1px solid #e5e6dc;padding:9px 0 0;text-align:left}
+#tool-drawer .mirror-button .icon{display:block;width:20px;height:20px}
+#tool-drawer .toggle{width:29px;height:18px;padding:3px;margin-left:auto}
+#tool-drawer .toggle:after{height:12px;width:12px}
+#tool-drawer .mirror-button[aria-pressed=true] .toggle:after{transform:translateX(11px)}
+#tool-drawer .shape-grid{grid-template-columns:1fr 1fr;gap:8px}
+#tool-drawer .shape-card{padding:8px;font-size:12px;gap:5px;border-radius:13px}
+#tool-drawer .shape-card svg{width:61px;height:61px}
+#tool-drawer .shape-card:hover{transform:translateY(-2px)}
+#tool-drawer .primitive-blend{margin:14px 0 0;padding:12px 12px 2px;border-radius:12px}
+#tool-drawer .drawer-swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;padding:10px 4px 16px;justify-items:center}
+#tool-drawer .swatch,#tool-drawer .custom-color{width:44px;height:44px}
+.drawer-reset{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;margin-top:14px;padding:12px;border:1px solid #d8dec9;border-radius:13px;background:#f1f4e7;text-align:left}
+.drawer-reset strong{display:block;font-size:12px}.drawer-reset small{display:block;margin-top:4px;font-size:10px;color:#768265}
+#tool-drawer .sound-toggle.mirror-button{padding:12px;border:1px solid #dde2d1;border-radius:13px;background:#f2f4e9}
+#tool-drawer .sound-toggle strong{font-size:12px}#tool-drawer .sound-toggle small{font-size:10px;margin-top:3px}
+.sound-volume,.opacity-setting{margin-top:15px}.test-sound{width:100%;min-height:44px;font-size:12px;background:#fff0e3}.sound-hint{font-size:10px;margin:10px 0 0}
+.bottom-dock{bottom:4.6rem;gap:.6rem;width:auto}
+.current-tool{min-height:44px;gap:.6rem;font-size:.8rem;padding:.6rem .9rem;background:#fffefbec}
+.current-tool>.icon:last-child{width:.8rem;transform:rotate(-90deg);opacity:.5}
+.new-clay{width:auto;height:44px;min-height:44px;padding:0 1rem;font-size:.75rem;border-radius:1rem}
+.new-clay span{display:inline}.new-clay .icon{width:1.2rem;height:1.2rem}
+.gesture-hint{bottom:1.2rem}
+.view-controls .icon-button,.view-controls .zoom-reset,.history .icon-button{min-width:44px;min-height:44px}
+@media(max-width:620px) and (orientation:portrait){
+  #app .tool-rail{top:auto;left:50%;bottom:1rem;transform:translateX(-50%);flex-direction:row;flex-wrap:nowrap;width:calc(100% - 1.2rem);max-width:29rem;padding:.35rem;gap:.1rem}
+  #app .tool-rail .tool{flex:1;min-width:0;width:auto;height:50px;min-height:48px;font-size:.6rem;gap:4px}
+  #app .tool-rail .tool .icon{width:21px;height:21px}
+  .rail-caption{display:none}.folder-notch{bottom:.22rem;right:.2rem;border-width:0 0 4px 4px}
+  .current-color{width:23px;height:23px}.tool.active:before{display:none}
+  #app .bottom-dock{left:50%;bottom:6.1rem;width:auto;gap:.5rem;transform:translateX(-50%)}
+  .current-tool{font-size:10px;padding:8px 10px}.new-clay{padding:0 12px;font-size:10px}
+  #app .history{top:4.3rem;left:.65rem;bottom:auto;display:flex;flex-direction:column;padding:2px}
+  #app .view-controls{right:.65rem;top:4.3rem;bottom:auto;display:grid;grid-template-columns:44px;padding:2px;gap:0}
+  .view-controls .zoom-reset{display:block;grid-column:auto;min-width:44px;font-size:9px;height:32px;min-height:32px}
+  .view-controls .mini-divider{display:none}.history .icon-button,.view-controls .icon-button{width:44px;height:44px}
+  .gesture-hint{display:none}.tool-drawer{animation-name:drawer-rise}
+  @keyframes drawer-rise{from{opacity:0;transform:translateY(9px) scale(.98)}to{opacity:1;transform:none}}
+}
+@media(orientation:landscape) and (max-height:660px){
+  #app .tool-rail{left:.7rem;top:50%;bottom:auto;transform:translateY(-50%);flex-direction:row;flex-wrap:wrap;justify-content:center;width:108px;padding:5px;gap:2px}
+  #app .tool-rail .tool{height:48px;width:46px;font-size:9px;gap:3px;flex:none}
+  #app .tool-rail .tool .icon{width:21px;height:21px}.tool.active:before,.rail-caption{display:none}
+  .canvas-top{left:130px}.canvas-intro{display:none}
+  #app .bottom-dock{left:130px;bottom:12px;transform:none;gap:8px;width:auto}
+  .current-tool{padding:6px 10px;font-size:11px}.new-clay{padding:0 11px;font-size:11px}
+  #app .history{left:130px;top:56px;bottom:auto;flex-direction:row;padding:2px}
+  #app .view-controls{right:10px;top:auto;bottom:12px;display:flex;flex-direction:row;padding:2px;gap:0}
+  .view-controls .zoom-reset{display:block;min-width:44px}.view-controls .mini-divider{display:none}
+  .gesture-hint{display:none}.current-color{width:23px;height:23px}
+}
+@media(orientation:landscape) and (max-height:480px){
+  .canvas-top .studio-tag{display:none}.canvas-top{justify-content:flex-end}
+  #app .view-controls{display:grid;grid-template-columns:44px 44px}.view-controls .zoom-reset{grid-column:1/-1;min-height:30px;height:30px}
+  #app .history{top:12px}.tool-drawer{border-radius:16px;padding:12px}
+}
+@media(prefers-reduced-motion:reduce){.tool-drawer,.folder-notch{animation:none;transition:none}}

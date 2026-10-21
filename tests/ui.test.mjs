@@ -20,7 +20,7 @@ test('device saves, shelf records and deletion round trip typed mesh data',async
   await storage.deleteCreation('current');
 });
 
-test('UI preserves existing clay and connects head starters, extra tools, sound, undo and the shelf',async()=>{
+test('pullout folders, pen options, color, sound, starters, undo and shelf preserve existing clay',async()=>{
   const earlier=createPreset('ball');await storage.writeCreation({id:'current',snapshot:earlier,updated:1});
   const {window,document}=parseHTML(await fs.readFile(new URL('../dist/index.html',import.meta.url),'utf8'));
   const modal=document.getElementById('modal');Object.defineProperty(modal,'open',{get(){return this.hasAttribute('open');}});modal.showModal=function(){this.setAttribute('open','');};modal.close=function(){this.removeAttribute('open');};
@@ -35,8 +35,8 @@ test('UI preserves existing clay and connects head starters, extra tools, sound,
     capture(){return 'data:image/png;base64,iVBORw0KGgo=';}
   }
   class MockAudio{
-    constructor(options){this.options=options;this.music=false;this.effects=false;MockAudio.instance=this;}
-    async set(kind,on){this[kind]=on;this.options.onChange();return true;} sound(){} resume(){}
+    constructor(options){this.options=options;this.music=false;this.effects=false;this.volume=.75;MockAudio.instance=this;}
+    async set(kind,on){this[kind]=on;this.options.onChange();return true;} sound(tool){this.lastTool=tool;} resume(){} setVolume(value){this.volume=value;}
   }
   const source=(await fs.readFile(new URL('../dist/app.js',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'');
   const timers=new Set();
@@ -45,27 +45,39 @@ test('UI preserves existing clay and connects head starters, extra tools, sound,
   vm.runInContext(source,context);
   const settle=async()=>{await new Promise(r=>setTimeout(r,40));};await settle();
   const click=selector=>{const element=document.querySelector(selector);assert.ok(element,selector);element.dispatchEvent(new window.Event('click',{bubbles:true}));};
-  assert.equal(document.querySelectorAll('.swatch').length,7);
-  click('[data-tool="pull"]');assert.equal(MockStudio.instance.tool,'pull');assert.equal(document.getElementById('tool-title').textContent,'A little stretch');
-  click('.swatch[data-color="#688fb6"]');assert.equal(MockStudio.instance.tool,'paint');assert.equal(MockStudio.instance.color,'#688fb6');
+  const drawer=document.getElementById('tool-drawer');
+  assert.equal(drawer.hidden,true);assert.equal(document.querySelectorAll('.tool-rail button').length,6);
+  click('#shape-tools');assert.equal(drawer.hidden,false);assert.equal(modal.open,false);assert.equal(document.getElementById('shape-tools').getAttribute('aria-expanded'),'true');
+  click('[data-tool="pull"]');assert.equal(MockStudio.instance.tool,'pull');assert.equal(document.getElementById('tool-title').textContent,'A little stretch');assert.equal(drawer.hidden,false);
+  click('#color-button');assert.equal(document.querySelectorAll('.swatch').length,7);click('.swatch[data-color="#688fb6"]');assert.equal(MockStudio.instance.tool,'paint');assert.equal(MockStudio.instance.color,'#688fb6');assert.match(document.getElementById('color-button').getAttribute('aria-label'),/Ocean/);assert.equal(document.getElementById('current-color').style.background,'#688fb6');
+  click('#paint-tools');click('[data-paint="spray"]');assert.equal(MockStudio.instance.paintStyle,'spray');
+  const opacity=document.getElementById('paint-opacity');opacity.value='35';opacity.dispatchEvent(new window.Event('input'));assert.equal(MockStudio.instance.paintOpacity,.35);
+  click('[data-tool="fill"]');assert.equal(MockStudio.instance.tool,'fill');assert.equal(document.getElementById('brush-size').disabled,true);
+  click('[data-paint="pen"]');assert.equal(MockStudio.instance.paintStyle,'pen');assert.equal(document.getElementById('brush-size').disabled,false);
   click('#mirror');assert.equal(MockStudio.instance.mirror,true);
   assert.equal(MockStudio.instance.state.meshes.length,1);assert.equal(MockStudio.instance.state.surface,'protected-ball-v1');
   assert.deepEqual((await storage.readCreation('before-solid-1')).snapshot,earlier,'the exact older autosave is archived before upgrading');
-  click('[data-tool="grow"]');assert.equal(MockStudio.instance.tool,'grow');assert.match(document.getElementById('tool-subtitle').textContent,/build rounded volume/);
+  click('#shape-tools');click('[data-tool="grow"]');assert.equal(MockStudio.instance.tool,'grow');assert.match(document.getElementById('tool-subtitle').textContent,/build rounded volume/);
+  click('[data-tool="clay"]');assert.equal(MockStudio.instance.tool,'clay');
   click('#spin');assert.equal(MockStudio.instance.spin,true);
-  click('#more-tools');assert.equal(modal.open,true);click('[data-extra="hole"]');assert.equal(MockStudio.instance.tool,'hole');assert.equal(document.getElementById('brush-size-label').textContent,'Hole size');
-  click('#more-tools');click('[data-extra="carve"]');assert.equal(MockStudio.instance.tool,'carve');
-  click('#more-tools');click('[data-extra="flatten"]');assert.equal(MockStudio.instance.tool,'flatten');
+  click('#cut-tools');assert.equal(modal.open,false);click('[data-tool="hole"]');assert.equal(MockStudio.instance.tool,'hole');assert.equal(document.getElementById('brush-size-label').textContent,'Hole size');
+  click('[data-tool="carve"]');assert.equal(MockStudio.instance.tool,'carve');click('[data-tool="engrave"]');assert.equal(MockStudio.instance.tool,'engrave');
+  click('#finish-tools');click('[data-tool="flatten"]');assert.equal(MockStudio.instance.tool,'flatten');click('[data-tool="polish"]');assert.equal(MockStudio.instance.tool,'polish');
   click('#move-object');assert.equal(MockStudio.instance.tool,'move');assert.equal(document.getElementById('brush-size').disabled,true);
-  click('[data-tool="grow"]');assert.equal(document.getElementById('brush-size').disabled,false);
-  click('#more-tools');click('#reset-shape');assert.equal(MockStudio.instance.resetCalled,true);assert.equal(MockStudio.instance.tool,'grow');assert.equal(MockStudio.instance.spin,true);
-  click('#sound');assert.equal(MockAudio.instance.music,false);click('#music-toggle');await settle();assert.equal(MockAudio.instance.music,true);assert.equal(document.getElementById('sound').getAttribute('aria-pressed'),'true');click('#effects-toggle');await settle();assert.equal(MockAudio.instance.effects,true);click('#close-modal');
-  click('#add-shape');assert.equal(modal.open,true);assert.equal(document.querySelectorAll('[data-primitive]').length,4);
+  click('#shape-tools');click('[data-tool="grow"]');assert.equal(document.getElementById('brush-size').disabled,false);
+  const size=document.getElementById('brush-size');size.value='125';size.dispatchEvent(new window.Event('input'));assert.equal(MockStudio.instance.radius,1.25);
+  click('#new-clay');click('#reset-shape');assert.equal(MockStudio.instance.resetCalled,true);assert.equal(MockStudio.instance.tool,'grow');assert.equal(MockStudio.instance.spin,true);
+  click('#sound');assert.equal(MockAudio.instance.music,false);click('#music-toggle');await settle();assert.equal(MockAudio.instance.music,true);assert.equal(document.getElementById('sound').getAttribute('aria-pressed'),'true');click('#test-sound');await settle();assert.equal(MockAudio.instance.effects,true);assert.equal(MockAudio.instance.lastTool,'push');click('#close-drawer');assert.equal(drawer.hidden,true);
+  click('#add-shape');assert.equal(modal.open,false);assert.equal(document.querySelectorAll('[data-primitive]').length,4);
   const blend=document.getElementById('primitive-blend');blend.value='40';blend.dispatchEvent(new window.Event('input'));
-  click('[data-primitive="capsule"]');assert.equal(modal.open,false);assert.equal(MockStudio.instance.tool,'stamp');assert.equal(MockStudio.instance.primitiveType,'capsule');assert.equal(MockStudio.instance.primitiveBlend,.4);assert.equal(document.getElementById('brush-size-label').textContent,'Shape size');
-  click('.swatch[data-color="#89a275"]');assert.equal(MockStudio.instance.tool,'stamp');assert.equal(MockStudio.instance.color,'#89a275');
+  click('[data-primitive="capsule"]');assert.equal(drawer.hidden,false);assert.equal(MockStudio.instance.tool,'stamp');assert.equal(MockStudio.instance.primitiveType,'capsule');assert.equal(MockStudio.instance.primitiveBlend,.4);assert.equal(document.getElementById('brush-size-label').textContent,'Shape size');
+  blend.value='30';blend.dispatchEvent(new window.Event('input'));assert.equal(MockStudio.instance.primitiveBlend,.3,'blend changes immediately for the active stamp');
+  click('#color-button');click('.swatch[data-color="#89a275"]');assert.equal(MockStudio.instance.tool,'stamp');assert.equal(MockStudio.instance.color,'#89a275');
+  click('#color-button');assert.equal(drawer.hidden,true,'the folder button toggles its pullout');
+  click('#cut-tools');const escape=new window.Event('keydown',{bubbles:true});escape.key='Escape';document.getElementById('cut-tools').dispatchEvent(escape);assert.equal(drawer.hidden,true);assert.equal(document.getElementById('cut-tools').getAttribute('aria-expanded'),'false');
+  click('#shape-tools');document.getElementById('viewport').dispatchEvent(new window.Event('pointerdown',{bubbles:true}));assert.equal(drawer.hidden,true,'canvas contact dismisses the pullout without a modal');
   const title=document.getElementById('project-name');title.value='My blue clay';title.dispatchEvent(new window.Event('change'));
-  click('#new-clay');assert.equal(modal.open,true);assert.equal(document.querySelectorAll('[data-starter]').length,2);click('[data-starter="head"]');assert.equal(title.value,'A little somebody');assert.equal(MockStudio.instance.state.surface,'solid-clay-v1');
+  click('#new-clay');assert.equal(drawer.hidden,false);assert.equal(modal.open,false);assert.equal(document.querySelectorAll('[data-starter]').length,2);click('[data-starter="head"]');assert.equal(title.value,'A little somebody');assert.equal(MockStudio.instance.state.surface,'solid-clay-v1');
   click('#undo');assert.equal(title.value,'My blue clay');
   click('#new-clay');click('[data-starter="ball"]');assert.equal(modal.open,false);assert.equal(title.value,'A ball of possibility');
   click('#undo');assert.equal(title.value,'My blue clay');
@@ -73,7 +85,7 @@ test('UI preserves existing clay and connects head starters, extra tools, sound,
   click('#keep');assert.ok(document.getElementById('export-project'));click('#save-shelf');await settle();assert.equal(modal.open,false);
   click('#open-shelf');await settle();assert.equal(document.querySelectorAll('[data-open]').length,2);assert.match(document.querySelector('.shelf-info').textContent,/A ball of possibility/);
   click('[data-open="0"]');assert.equal(modal.open,false);
-  click('#help');assert.match(document.getElementById('modal-content').textContent,/two fingers/);assert.match(document.getElementById('modal-content').textContent,/Reset in More softly/);assert.match(document.getElementById('modal-content').textContent,/cut a tunnel through both sides/);click('#close-modal');
+  click('#help');assert.match(document.getElementById('modal-content').textContent,/two fingers/);assert.match(document.getElementById('modal-content').textContent,/Melt back to a ball in New clay softly/);assert.match(document.getElementById('modal-content').textContent,/cut a tunnel through both sides/);click('#close-modal');
   await settle();const saved=await storage.readCreation('current');assert.equal(saved.snapshot.name,'A ball of possibility');
   for(const timer of timers)clearTimeout(timer);
 });

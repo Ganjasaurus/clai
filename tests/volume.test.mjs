@@ -154,3 +154,69 @@ test('snapshots own their changing topology, and empty clay can still save and r
   const previous=globalThis.window;globalThis.window={matchMedia:()=>({matches:true})};
   try{assert.equal(studio.resetShape(),true);studio.animateReset(100);assert.equal(topology(studio.snapshot().meshes[0]).euler,2);}finally{globalThis.window=previous;}
 });
+
+test('Grow passes the old workspace wall with a fixed sample budget and a closed surface',()=>{
+  const f=createVolume('ball'),count=f.values.length,bytes=f.values.byteLength+f.pigment.byteLength;let tip=1.28;
+  for(let i=0;i<100;i++){
+    let z=tip+.8;while(z>tip-.8&&sampleVolume(f,0,0,z)>=0)z-=.015;tip=z;
+    editVolume(f,{tool:'grow',point:[0,0,tip],normal:[0,0,1],radius:.55,strength:1});
+  }
+  assert.ok(tip>4.5,`Growth reaches ${tip}`);assert.ok(f.extent>VOLUME.extent);assert.equal(f.values.length,count);assert.equal(f.values.byteLength+f.pigment.byteLength,bytes);
+  assert.ok(sampleVolume(f,0,0,0)<0,'the original clay still exists');topology(meshVolume(f));
+});
+
+test('long stretches keep a rounded connection instead of thinning out and stalling',()=>{
+  const f=createVolume('ball');
+  for(let i=0;i<160;i++)editVolume(f,{tool:'pull',point:[0,0,1.28+i*.025],normal:[0,0,1],radius:.55,drag:[0,0,.025]});
+  assert.ok(f.extent>VOLUME.extent);assert.ok(sampleVolume(f,0,0,5)<0,'the stretched tip follows the hand');
+  for(let z=1;z<=5;z+=.1)assert.ok(sampleVolume(f,0,0,z)<0,'the stretched clay remains connected');
+  topology(meshVolume(f));
+});
+
+test('expanded workspace survives files, history, loading and reset, with legacy grid support',()=>{
+  const f=createVolume('ball');editVolume(f,{tool:'clay',point:[3.5,.5,0],radius:.9});
+  const encoded=encodeVolume(f);assert.equal(encoded.grid,2);assert.ok(encoded.extent>3.6);assert.deepEqual(decodeVolume(encoded),cloneVolume(f));
+  for(const extent of [NaN,Infinity,-1,1000])assert.throws(()=>decodeVolume({...encoded,extent}));
+  const old=encodeVolume(createVolume('ball'));old.grid=1;delete old.extent;assert.equal(decodeVolume(old).extent,3.6);
+  const studio=studioFixture(f),history=new History();history.push(studio.snapshot('Expanded'));studio.load(decodeProject(encodeProject(studio.snapshot())));assert.equal(studio.volume.extent,f.extent);
+  const previous=globalThis.window;globalThis.window={matchMedia:()=>({matches:true})};studio.onChange=()=>history.push(studio.snapshot('Reset'));
+  try{assert.ok(studio.resetShape());studio.animateReset(100);assert.equal(studio.volume.extent,3.6);assert.ok(sampleVolume(studio.volume,0,0,0)<0);assert.equal(topology(studio.snapshot().meshes[0]).euler,2);studio.load(history.undo());assert.equal(studio.volume.extent,f.extent);}finally{globalThis.window=previous;}
+});
+
+test('clay pen, engraving and finishing tools change the surface, while pen styles only color it',()=>{
+  for(const tool of ['clay','engrave','smooth','flatten','polish']){
+    const f=createVolume('ball'),before=f.values.slice();editVolume(f,{tool,point:[0,0,1.28],normal:[0,0,1],radius:.6});assert.notDeepEqual(f.values,before,tool);topology(meshVolume(f));
+  }
+  const amounts=[];
+  for(const paintStyle of ['pen','brush','spray']){
+    const f=createVolume('ball',[0,0,0]),mesh=meshVolume(f),before=f.values.slice();editVolume(f,{tool:'paint',point:[0,0,1.28],radius:.6,paintStyle,color:[1,0,0]});amounts.push(f.pigment.reduce((sum,v)=>sum+v,0));const after=meshVolume(f);assert.deepEqual(f.values,before);assert.equal(after.positions,mesh.positions);assert.equal(after.indices,mesh.indices);
+  }
+  assert.ok(amounts[0]>amounts[1]&&amounts[1]>amounts[2],'pen, brush and spray have distinct ink deposits');
+  const f=createVolume('ball',[0,0,0]),mesh=meshVolume(f);editVolume(f,{tool:'fill',point:[0,0,1.28],color:[1,0,0],opacity:.5});assert.equal(f.pigment[0],128);assert.equal(meshVolume(f).positions,mesh.positions);
+});
+
+test('actual pointer strokes continue beyond the silhouette for Stretch and Clay pen, even while turning',()=>{
+  for(const tool of ['pull','clay','grow']){
+    const studio=studioFixture();Object.assign(studio,{tool,radius:.6,theta:0,phi:Math.PI/2,zoom:.65,spin:true,raycaster:new THREE.Raycaster(),ndc:new THREE.Vector2(),strokePlane:new THREE.Plane(),previousWorld:new THREE.Vector3(0,0,1.28)});
+    studio.container.getBoundingClientRect=()=>({left:0,top:0,width:800,height:600});studio.showBrush=()=>{};studio.target.set(0,0,0);studio.updateCamera();studio.meshes[0].updateMatrixWorld(true);
+    const screen=point=>{const p=new THREE.Vector3(...point).project(studio.camera);return {x:(p.x+1)*400,y:(1-p.y)*300};};
+    const begin=screen([0,0,1.28]),end=screen([4.2,.2,1.28]);studio.strokeHit=studio.hit(begin.x,begin.y);assert.ok(studio.strokeHit);
+    studio.strokePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0,0,1),studio.strokeHit.point);studio.previousWorld.copy(studio.strokeHit.point);studio.mode='sculpt';studio.lastPointer=begin;studio.pointers.set(1,begin);
+    for(let i=1;i<=12;i++){studio.handleMove({pointerId:1,clientX:begin.x+(end.x-begin.x)*i/12,clientY:begin.y+(end.y-begin.y)*i/12,pointerType:'mouse',pressure:.5});studio.flushVolume();}
+    assert.equal(studio.mode,'sculpt');assert.equal(studio.spin,true);assert.ok(studio.strokeHit.point.x>4);assert.ok(sampleVolume(studio.volume,...(tool==='grow'?studio.strokeHit.point.toArray():[4.15,.2,1.28]))<.18,`${tool} reaches beyond the silhouette`);topology(studio.snapshot().meshes[0]);
+  }
+});
+
+test('zoom and moving offer a much larger canvas without changing the saved clay',()=>{
+  const studio=studioFixture(),before=cloneVolume(studio.volume);studio.zoomBy(.01);assert.equal(studio.zoom,.08);assert.ok(studio.camera.far>studio.camera.position.length());
+  studio.zoomBy(1000);assert.equal(studio.zoom,4);studio.zoomBy(.1);studio.mode='move';studio.lastPointer={x:0,y:0};studio.pointers.set(1,studio.lastPointer);studio.handleMove({pointerId:1,clientX:400,clientY:0});assert.ok(Math.abs(studio.target.x)>2);assert.deepEqual(cloneVolume(studio.volume),before);studio.resetView();assert.equal(studio.zoom,1);
+});
+
+test('sparse fast pointer samples create a continuous clay line instead of detached beads',()=>{
+  for(const tool of ['clay','pull']){
+    const f=createVolume('ball');
+    editVolume(f,{tool,point:tool==='pull'?[2.8,0,1.28]:[5.6,0,1.28],drag:[5.6,0,0],radius:.5,normal:[0,0,1]});
+    for(let x=0;x<5.6;x+=.1)assert.ok(sampleVolume(f,x,0,1.28)<0,`${tool} stays connected at ${x}`);
+    topology(meshVolume(f));
+  }
+});

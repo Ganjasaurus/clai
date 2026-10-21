@@ -8,7 +8,15 @@ const $=id=>document.getElementById(id);
 const icon=(name,classes='')=>`<svg class="icon ${classes}" aria-hidden="true"><use href="./icons.svg#${name}"/></svg>`;
 const escapeHTML=text=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const palette=[['Apricot','#ed8857'],['Butter','#e7bd54'],['Leaf','#89a275'],['Ocean','#688fb6'],['Lilac','#a69cc3'],['Milk','#f3e8cd'],['Ink','#40463e']];
-const toolCopy={push:['A little squish','Press the clay inward','squish'],pull:['A little stretch','Pull the clay outward','stretch'],grow:['A little more clay','Hold to build rounded volume','grow'],smooth:['Smooth things out','Soften bumps and edges','smooth'],paint:['Make it colorful','Brush a little color on','paint'],stamp:['A little new shape','Tap the clay to blend it in','add a shape'],hole:['Peek right through','Tap to make a tunnel','make a hole'],carve:['Scoop a little away','Hold to carve into your clay','carve'],flatten:['A lovely flat spot','Gently flatten the surface','flatten'],move:['A little wiggle room','Drag to move your view','move']};
+const toolCopy={push:['A little squish','Press the clay inward','squish'],pull:['A little stretch','Pull the clay outward','stretch'],grow:['A little more clay','Hold to build rounded volume','grow'],smooth:['Smooth things out','Soften bumps and edges','smooth'],paint:['Make it colorful','Brush a little color on','paint'],stamp:['A little new shape','Tap the clay to blend it in','add a shape'],hole:['Peek right through','Tap to make a tunnel','make a hole'],carve:['Scoop a little away','Hold to carve into your clay','carve'],flatten:['A lovely flat spot','Gently flatten the surface','flatten'],move:['A little wiggle room','Drag to move your view','move'],clay:['Draw with clay','Draw raised lines, even past an edge','build'],engrave:['Little lines in clay','Draw a narrow groove','engrave'],polish:['A finishing touch','Gently soften tiny bumps','polish'],fill:['Color it all','Tap once to color the whole creation','fill']};
+const folders={
+  shape:{title:'Shape & build',hint:'A squish, a stretch, a little more.',tools:[['push','Squish','push'],['pull','Stretch','pull'],['grow','Grow','grow'],['clay','Clay pen','clay']]},
+  cut:{title:'Cut & carve',hint:'Scoop away or peek right through.',tools:[['carve','Carve','carve'],['engrave','Engrave','engrave'],['hole','Hole','hole']]},
+  finish:{title:'Smooth & level',hint:'A lovely little finishing touch.',tools:[['smooth','Smooth','smooth'],['flatten','Flatten','flatten'],['polish','Polish','spark']]},
+  paint:{title:'Draw & color',hint:'Make your mark, big or small.',tools:[['paint','Pen','pencil'],['paint','Brush','paint'],['paint','Spray','spray'],['fill','Fill all','fill']]}
+};
+const toolFolder=tool=>tool==='stamp'?'shapes':Object.keys(folders).find(key=>folders[key].tools.some(t=>t[0]===tool))||'shape';
+let openFolder=null,drawerTrigger=null,paintStyle='pen',paintOpacity=1;
 const audio=new ClayAudio({onChange:()=>{$('sound').setAttribute('aria-pressed',String(audio.music||audio.effects));$('sound').title=audio.music||audio.effects?'Studio sounds · on':'Studio sounds · muted';}});
 let primitiveType='ball',primitiveBlend=.22;
 let studio,history=new History(),shelfId=null,saveTimer,toastTimer,selectedColor=palette[0][1],savedRevision=0,revision=0,loading=true,saveQueue=Promise.resolve(),storageAvailable=true;
@@ -26,22 +34,64 @@ function saveCurrent(){
   return saveQueue;
 }
 function selectTool(tool){
-  studio.finishGesture();studio.setTool(tool);
-  document.querySelectorAll('[data-tool]').forEach(b=>{if(b.matches('button')){b.classList.toggle('active',b.dataset.tool===tool);b.setAttribute('aria-pressed',String(b.dataset.tool===tool));}});
-  $('add-shape').classList.toggle('active',tool==='stamp');$('add-shape').setAttribute('aria-pressed',String(tool==='stamp'));
-  const extra=['hole','carve','flatten'].includes(tool);$('more-tools').classList.toggle('active',extra);$('more-tools').setAttribute('aria-pressed',String(extra));$('more-tools').querySelector('span').textContent=extra?{hole:'Hole',carve:'Carve',flatten:'Flatten'}[tool]:'More';$('more-tools').querySelector('use').setAttribute('href',`./icons.svg#${extra?tool:'more'}`);
+  studio.finishGesture();studio.setTool(tool);studio.paintStyle=paintStyle;
+  const group=toolFolder(tool),entry=folders[group]?.tools.find(t=>t[0]===tool&&(tool!=='paint'||t[2]==={pen:'pencil',brush:'paint',spray:'spray'}[paintStyle]));
+  const label=tool==='stamp'?PRIMITIVES[primitiveType].label:tool==='move'?'Move':entry?.[1]||tool;
+  const symbol=tool==='stamp'?'blend':tool==='move'?'move':entry?.[2]||tool;
+  document.querySelectorAll('[data-folder]').forEach(b=>{const active=b.dataset.folder===group&&tool!=='move';b.classList.toggle('active',active);if(b.dataset.folder!=='color')b.setAttribute('aria-label',`${b.querySelector('span').textContent} tools${active?` · ${label} selected`:''}`);});
+  document.querySelectorAll('[data-tool]').forEach(b=>{const active=b.dataset.tool===tool&&(!b.dataset.paint||b.dataset.paint===paintStyle);b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));});
   $('move-object').setAttribute('aria-pressed',String(tool==='move'));
+  $('current-tool').querySelector('span').textContent=label;$('current-tool').querySelector('use').setAttribute('href',`./icons.svg#${symbol}`);$('current-tool').setAttribute('aria-label',`${label} · open tool settings`);
   $('tool-title').textContent=tool==='stamp'?`A little ${PRIMITIVES[primitiveType].label.toLowerCase()}`:toolCopy[tool][0];$('tool-subtitle').textContent=toolCopy[tool][1];
-  const label=tool==='stamp'?'Shape size':tool==='hole'?'Hole size':'Brush size';$('brush-size-label').textContent=label;$('brush-size').setAttribute('aria-label',label);$('brush-size').disabled=tool==='move';$('mirror').disabled=tool==='move';
-  $('gesture-hint').querySelector('span').innerHTML=tool==='stamp'?'Tap clay to blend in a shape <b>·</b> Drag empty space to turn':tool==='hole'?'Tap clay to make a hole <b>·</b> Undo brings the clay back':tool==='move'?'Drag to move your creation <b>·</b> Tap the percentage to center it':tool==='grow'||tool==='carve'?`Hold on clay to ${toolCopy[tool][2]} <b>·</b> Try it with the pottery wheel`:`Drag clay to ${toolCopy[tool][2]} <b>·</b> Drag the space to turn <b>·</b> Pinch to zoom`;
+  const sizeLabel=tool==='stamp'?'Shape size':tool==='hole'?'Hole size':tool==='paint'?'Pen size':'Brush size';$('brush-size-label').textContent=sizeLabel;$('brush-size').setAttribute('aria-label',sizeLabel);$('brush-size').disabled=['move','fill'].includes(tool);$('mirror').disabled=['move','fill'].includes(tool);
+  $('strength-setting').hidden=['paint','fill','stamp','hole'].includes(tool);
+  $('gesture-hint').querySelector('span').innerHTML=tool==='stamp'?'Tap clay to blend in a shape <b>·</b> Drag empty space to turn':tool==='hole'?'Tap clay to make a hole <b>·</b> Undo brings the clay back':tool==='move'?'Drag to move your creation <b>·</b> Tap the percentage to center it':tool==='clay'?'Draw from the clay into the space around it <b>·</b> Undo anytime':`Drag clay to ${toolCopy[tool][2]} <b>·</b> Drag the space to turn <b>·</b> Pinch to zoom`;
 }
 function selectColor(color,paint=true){
-  selectedColor=color;studio.setColor(color);$('brush-preview').style.background=color;$('custom-color').value=color;
+  selectedColor=color;studio.setColor(color);$('brush-preview').style.background=color;$('current-color').style.background=color;
+  if($('custom-color'))$('custom-color').value=color;
+  const label=palette.find(p=>p[1]===color)?.[0]||color;$('color-button').setAttribute('aria-label',`Color · ${label} selected`);
   document.querySelectorAll('.swatch').forEach(b=>{b.classList.toggle('selected',b.dataset.color===color);b.setAttribute('aria-pressed',String(b.dataset.color===color));});
-  if(paint&&studio.tool!=='stamp')selectTool('paint');
+  if(paint&&!['stamp','clay','fill'].includes(studio.tool))selectTool('paint');
+}
+function closeDrawer(restoreFocus=false){
+  const trigger=drawerTrigger;$('tool-drawer').hidden=true;
+  document.querySelectorAll('[aria-controls="tool-drawer"]').forEach(b=>b.setAttribute('aria-expanded','false'));
+  openFolder=null;drawerTrigger=null;if(restoreFocus)trigger?.focus({preventScroll:true});
+}
+function positionDrawer(){
+  if(!drawerTrigger||!$('tool-drawer').getBoundingClientRect)return;
+  const panel=$('tool-drawer'),area=$('workspace').getBoundingClientRect(),anchor=drawerTrigger.getBoundingClientRect(),gap=12;
+  const width=Math.min(312,area.width-20);panel.style.width=`${width}px`;panel.style.maxHeight=`${Math.max(100,area.height-24)}px`;
+  const height=panel.getBoundingClientRect().height,portrait=area.width<=620&&area.height>area.width;
+  let x=anchor.right-area.left+gap,y=anchor.top-area.top-24;
+  if(portrait){x=(area.width-width)/2;const rail=document.querySelector('.tool-rail').getBoundingClientRect();panel.style.maxHeight=`${Math.max(100,rail.top-area.top-24)}px`;y=rail.top-area.top-panel.getBoundingClientRect().height-gap;}
+  else if(['sound','new-clay','current-tool'].includes(drawerTrigger.id)){x=anchor.right-area.left-width;y=anchor.bottom-area.top+gap;if(y+height>area.height)y=anchor.top-area.top-height-gap;}
+  panel.style.left=`${Math.max(10,Math.min(x,area.width-width-10))}px`;panel.style.top=`${Math.max(10,Math.min(y,area.height-height-10))}px`;
+}
+function openDrawer(key,trigger,title,content,brush=false){
+  if(openFolder===key&&drawerTrigger===trigger){closeDrawer();return false;}
+  closeDrawer();studio.finishGesture();openFolder=key;drawerTrigger=trigger;
+  $('drawer-title').textContent=title;$('drawer-content').innerHTML=content;$('brush-panel').hidden=!brush;$('tool-drawer').hidden=false;
+  trigger.setAttribute('aria-expanded','true');if(toolFolder(studio.tool)===key)$('current-tool').setAttribute('aria-expanded','true');positionDrawer();return true;
+}
+function showFolder(key,trigger=document.querySelector(`[data-folder="${key}"]`)){
+  if(key==='shapes')return showPrimitives(trigger);if(key==='color')return showColors(trigger);
+  const folder=folders[key];
+  const choices=folder.tools.map(([tool,label,symbol],i)=>{const style=key==='paint'&&tool==='paint'?['pen','brush','spray'][i]:null,active=studio.tool===tool&&(!style||style===paintStyle);return `<button class="folder-choice${active?' active':''}" data-tool="${tool}" ${style?`data-paint="${style}"`:''} aria-pressed="${active}">${icon(symbol)}<span>${label}</span></button>`;}).join('');
+  const paint=key==='paint'?`<div class="opacity-setting"><div class="range-label"><label for="paint-opacity">Color strength</label><output id="paint-opacity-value">${Math.round(paintOpacity*100)}%</output></div><input id="paint-opacity" type="range" min="10" max="100" value="${Math.round(paintOpacity*100)}"></div>`:'';
+  if(!openDrawer(key,trigger,folder.title,`<p class="drawer-hint">${folder.hint}</p><div class="folder-choices">${choices}</div>${paint}`,true))return;
+  document.querySelectorAll('[data-tool]').forEach(button=>button.onclick=()=>{if(button.dataset.paint)paintStyle=button.dataset.paint;selectTool(button.dataset.tool);});
+  if($('paint-opacity'))$('paint-opacity').oninput=e=>{paintOpacity=Number(e.target.value)/100;studio.paintOpacity=paintOpacity;$('paint-opacity-value').textContent=`${e.target.value}%`;fillRange(e.target);};
+  // Keep the active tool until a child is chosen; opening a folder never edits clay.
+  positionDrawer();
+}
+function showColors(trigger=$('color-button')){
+  if(!openDrawer('color',trigger,'A little color',`<p class="drawer-hint">Pick a favorite. Make it yours.</p><div id="swatches" class="drawer-swatches">${palette.map(([label,color])=>`<button class="swatch${selectedColor===color?' selected':''}" style="--color:${color}" data-color="${color}" aria-label="${label}" title="${label}" aria-pressed="${selectedColor===color}"></button>`).join('')}<label class="custom-color" title="Mix your own color"><input type="color" id="custom-color" value="${selectedColor}" aria-label="Mix your own color">${icon('plus')}</label></div>`))return;
+  document.querySelectorAll('.swatch').forEach(b=>b.onclick=()=>selectColor(b.dataset.color));$('custom-color').oninput=e=>selectColor(e.target.value);
 }
 function openModal(html,eyebrow='YOUR LITTLE STUDIO'){
-  studio.finishGesture();$('modal-content').innerHTML=html;$('modal-eyebrow').textContent=eyebrow;$('modal').setAttribute('aria-labelledby','modal-title');
+  closeDrawer();studio.finishGesture();$('modal-content').innerHTML=html;$('modal-eyebrow').textContent=eyebrow;$('modal').setAttribute('aria-labelledby','modal-title');
   if(!$('modal').open)$('modal').showModal();
 }
 function closeModal(){$('modal').close();}
@@ -60,29 +110,27 @@ const previews={
 };
 function shapePreview(id,color){return `<svg viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="${id}-fill" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${color}"/><stop offset="1" stop-color="${color}" stop-opacity=".8"/></linearGradient></defs><ellipse cx="50" cy="88" rx="28" ry="5" fill="#6c765f" opacity=".1"/><g fill="url(#${id}-fill)">${previews[id]}</g></svg>`;}
 function showStarters(){
-  openModal(`<h2 id="modal-title">Who will you make?</h2><p class="subtitle">Start with a little face, or a ball full of possibilities.</p><div class="shape-grid starter-grid"><button class="shape-card" data-starter="head">${shapePreview('head',selectedColor)}<span>A little head</span></button><button class="shape-card" data-starter="ball">${shapePreview('ball',selectedColor)}<span>A simple ball</span></button></div><p class="modal-footnote">${icon('undo','small')} Undo brings your previous creation back.</p>`,'FRESH LITTLE IDEAS');
+  if(!openDrawer('starters',$('new-clay'),'A fresh beginning',`<div class="shape-grid starter-grid"><button class="shape-card" data-starter="head">${shapePreview('head',selectedColor)}<span>A little head</span></button><button class="shape-card" data-starter="ball">${shapePreview('ball',selectedColor)}<span>A simple ball</span></button></div><button class="drawer-reset" id="reset-shape" ${studio.resetAnimation?'disabled':''}>${icon('reset')}<span><strong>Melt back to a ball</strong><small>Keep your colors. Undo anytime.</small></span></button>`))return;
   document.querySelectorAll('[data-starter]').forEach(button=>button.onclick=()=>{
-    const preset=createPreset(button.dataset.starter,selectedColor);studio.load(preset);$('project-name').value=preset.name;shelfId=null;studio.resetView();history.push(studio.snapshot(name()));refreshHistory();scheduleSave();selectTool('push');closeModal();audio.sound('stamp');toast('A fresh little beginning. Undo brings the last one back.');
+    const preset=createPreset(button.dataset.starter,selectedColor);studio.load(preset);$('project-name').value=preset.name;shelfId=null;studio.resetView();history.push(studio.snapshot(name()));refreshHistory();scheduleSave();selectTool('push');closeDrawer();audio.sound('stamp');toast('A fresh little beginning. Undo brings the last one back.');
   });
+  $('reset-shape').onclick=()=>{closeDrawer();resetShape();};
 }
 function resetShape(){if(!studio.resetShape())toast('Already a lovely little ball.');}
-function showMoreTools(){
-  openModal(`<h2 id="modal-title">A few little extras.</h2><p class="subtitle">Scoop, peek through, or make a smooth flat spot.</p><div class="extra-grid">${[['hole','Hole','A tunnel all the way through'],['carve','Carve','Scoop clay away as you hold'],['flatten','Flatten','Make a gentle flat surface']].map(([id,title,description])=>`<button class="extra-tool" data-extra="${id}" aria-pressed="${studio.tool===id}">${icon(id)}<span><strong>${title}</strong><small>${description}</small></span></button>`).join('')}<button class="extra-tool" id="reset-shape" aria-busy="${!!studio.resetAnimation}" ${studio.resetAnimation?'disabled':''}>${icon('reset')}<span><strong>Reset</strong><small>Melt back into a ball. Keep your colors.</small></span></button></div><p class="modal-footnote">${icon('undo','small')} Every clay change can be undone.</p>`,'MORE WAYS TO PLAY');
-  document.querySelectorAll('[data-extra]').forEach(button=>button.onclick=()=>{selectTool(button.dataset.extra);closeModal();});
-  $('reset-shape').onclick=()=>{closeModal();resetShape();};
-}
 function showSound(){
-  openModal(`<h2 id="modal-title">A softer little studio.</h2><p class="subtitle">A gentle tune and little sounds for busy hands.</p><div class="sound-options"><button class="sound-toggle mirror-button" id="music-toggle" aria-pressed="${audio.music}">${icon('music')}<span><strong>Calming music</strong><small>A slow, floating melody</small></span><span class="toggle" aria-hidden="true"></span></button><button class="sound-toggle mirror-button" id="effects-toggle" aria-pressed="${audio.effects}">${icon('sound')}<span><strong>Clay sounds</strong><small>Soft squishes, scoops, and pops</small></span><span class="toggle" aria-hidden="true"></span></button></div><p class="modal-footnote">Starts quiet. Sound pauses when you leave the studio.</p>`,'SOUND & QUIET');
-  for(const [id,kind] of [['music-toggle','music'],['effects-toggle','effects']])$(id).onclick=async()=>{const button=$(id);button.disabled=true;const okay=await audio.set(kind,!audio[kind]);button.setAttribute('aria-pressed',String(audio[kind]));button.disabled=false;if(!okay)toast('Sound is unavailable in this browser. Your clay is ready to play.');else if(kind==='effects')audio.sound('tap');};
+  if(!openDrawer('sound',$('sound'),'Sound & quiet',`<p class="drawer-hint">A gentle tune. A satisfying little squish.</p><div class="sound-options"><button class="sound-toggle mirror-button" id="music-toggle" aria-pressed="${audio.music}">${icon('music')}<span><strong>Calming music</strong><small>A slow, floating melody</small></span><span class="toggle" aria-hidden="true"></span></button><button class="sound-toggle mirror-button" id="effects-toggle" aria-pressed="${audio.effects}">${icon('sound')}<span><strong>Clay sounds</strong><small>Squishes, scoops, and pops</small></span><span class="toggle" aria-hidden="true"></span></button></div><div class="sound-volume"><div class="range-label"><label for="sound-volume">Volume</label><output id="sound-volume-value">${Math.round(audio.volume*100)}%</output></div><input id="sound-volume" type="range" min="0" max="100" value="${Math.round(audio.volume*100)}"></div><button class="button test-sound" id="test-sound">${icon('sound')} Try a squish</button><p class="drawer-hint sound-hint">Try a squish turns clay sounds on. Music stays your choice.</p>`))return;
+  for(const [id,kind] of [['music-toggle','music'],['effects-toggle','effects']])$(id).onclick=async()=>{const button=$(id);button.disabled=true;const okay=await audio.set(kind,!audio[kind]);button.setAttribute('aria-pressed',String(audio[kind]));button.disabled=false;if(!okay)toast('Sound is unavailable in this browser. Your clay is ready to play.');else if(kind==='effects')audio.sound('stamp');};
+  $('sound-volume').oninput=e=>{audio.setVolume(Number(e.target.value)/100);$('sound-volume-value').textContent=`${e.target.value}%`;fillRange(e.target);};
+  $('test-sound').onclick=async()=>{if(await audio.set('effects',true)){if(audio.volume===0){audio.setVolume(.75);if($('sound-volume')){$('sound-volume').value='75';$('sound-volume-value').textContent='75%';}}audio.lastSound=-Infinity;audio.sound('push');$('effects-toggle')?.setAttribute('aria-pressed','true');}else toast('Sound could not start. Try your browser’s sound settings.');};
 }
-function showPrimitives(){
-  openModal(`<h2 id="modal-title">Little shapes. Big possibilities.</h2><p class="subtitle">Pick a shape, then tap your clay. It all melts into one.</p><div class="shape-grid primitive-grid">${Object.entries(PRIMITIVES).map(([id,p])=>`<button class="shape-card" data-primitive="${id}" aria-pressed="${id===primitiveType}">${shapePreview(id,selectedColor)}<span>${p.label}</span></button>`).join('')}</div><div class="primitive-blend"><div class="range-label"><label for="primitive-blend">Soft blend</label><output id="primitive-blend-value">${primitiveBlend>.33?'Melty':primitiveBlend<.18?'Gentle':'Soft'}</output></div><input id="primitive-blend" type="range" min="8" max="50" value="${Math.round(primitiveBlend*100)}" aria-label="How softly shapes blend"></div><p class="modal-footnote">${icon('spark','small')} Your selected color comes along. Use Shape size to go bigger or smaller, or Mirror magic for both sides.</p>`,'A LITTLE MORE CLAY');
-  const blend=$('primitive-blend');blend.style.setProperty('--fill',`${(primitiveBlend*100-8)/42*100}%`);
-  blend.oninput=e=>{primitiveBlend=Number(e.target.value)/100;$('primitive-blend-value').textContent=primitiveBlend>.33?'Melty':primitiveBlend<.18?'Gentle':'Soft';e.target.style.setProperty('--fill',`${(Number(e.target.value)-8)/42*100}%`);};
-  document.querySelectorAll('[data-primitive]').forEach(button=>button.onclick=()=>{primitiveType=button.dataset.primitive;studio.setPrimitive(primitiveType,primitiveBlend);selectTool('stamp');closeModal();});
+function showPrimitives(trigger=$('add-shape')){
+  if(!openDrawer('shapes',trigger,'Little shapes',`<p class="drawer-hint">Pick a shape. Tap your clay. Blend it in.</p><div class="shape-grid primitive-grid">${Object.entries(PRIMITIVES).map(([id,p])=>`<button class="shape-card" data-primitive="${id}" aria-pressed="${id===primitiveType}">${shapePreview(id,selectedColor)}<span>${p.label}</span></button>`).join('')}</div><div class="primitive-blend"><div class="range-label"><label for="primitive-blend">Soft blend</label><output id="primitive-blend-value">${primitiveBlend>.33?'Melty':primitiveBlend<.18?'Gentle':'Soft'}</output></div><input id="primitive-blend" type="range" min="8" max="50" value="${Math.round(primitiveBlend*100)}" aria-label="How softly shapes blend"></div>`,true))return;
+  const blend=$('primitive-blend');fillRange(blend);
+  blend.oninput=e=>{primitiveBlend=Number(e.target.value)/100;studio.primitiveBlend=primitiveBlend;$('primitive-blend-value').textContent=primitiveBlend>.33?'Melty':primitiveBlend<.18?'Gentle':'Soft';fillRange(e.target);};
+  document.querySelectorAll('[data-primitive]').forEach(button=>button.onclick=()=>{primitiveType=button.dataset.primitive;studio.setPrimitive(primitiveType,primitiveBlend);selectTool('stamp');document.querySelectorAll('[data-primitive]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));});
 }
 function showHelp(){
-  openModal(`<h2 id="modal-title">Little hands. Big ideas.</h2><p class="subtitle">There’s no wrong way to play with clay.</p><div class="help-list"><div class="help-step">${icon('push')}<div><strong>Squish, stretch, smooth. Or grow!</strong><p>Drag to shape your clay, or hold Grow to build up rounded volume. Your clay is solid all the way through. Keep squishing inward, or choose Carve in More to scoop it away.</p></div></div><div class="help-step">${icon('blend')}<div><strong>A little shape, a whole new idea.</strong><p>Open Shapes, pick a ball, egg, pill, or soft cube, then tap your clay. Drag the preview into place before lifting your finger. Soft blend melts joins together, and Shape size changes how much clay you add.</p></div></div><div class="help-step">${icon('hole')}<div><strong>Make a little window.</strong><p>Open More and choose Hole. Tap the clay to cut a tunnel through both sides. Drag before lifting to place it. Try Flatten for a flat spot. All these tools work with Mirror magic.</p></div></div><div class="help-step">${icon('paint')}<div><strong>A splash of you.</strong><p>Pick a color and brush it onto your creation. Mirror magic paints or sculpts both sides at once.</p></div></div><div class="help-step">${icon('orbit')}<div><strong>Your own little pottery wheel.</strong><p>Switch on the wheel by the zoom buttons. It keeps turning while you sculpt or paint—even while you hold still. Drag empty space to look around, or use two fingers to turn and pinch to zoom. The four-arrow Move button shifts your view of the whole creation. Tap the percentage to center it again.</p></div></div><div class="help-step">${icon('heart')}<div><strong>A fresh shape, in a little moment.</strong><p>Reset in More softly returns your clay to a ball and keeps your colors. Undo brings your shape back. Your clay saves on this device; download a clai file for a backup.</p></div></div></div><div class="help-keys">Keyboard: <kbd>1</kbd>–<kbd>5</kbd> tools · <kbd>6</kbd> reset shape · <kbd>7</kbd> add shapes · <kbd>8</kbd> hole · <kbd>9</kbd> carve · <kbd>M</kbd> move · <kbd>Ctrl/⌘ Z</kbd> undo · <kbd>Shift Z</kbd> with Ctrl/⌘ to redo · <kbd>[</kbd> <kbd>]</kbd> brush size · <kbd>0</kbd> reset view<br>Right-drag or hold <kbd>Space</kbd> on the canvas to turn. A stylus can control pressure.</div>`,'A QUICK LITTLE HOW-TO');
+  openModal(`<h2 id="modal-title">Little hands. Big ideas.</h2><p class="subtitle">There’s no wrong way to play with clay.</p><div class="help-list"><div class="help-step">${icon('push')}<div><strong>Squish, stretch, smooth. Or grow!</strong><p>Drag to shape your clay, or hold Grow to build up rounded volume. Your clay is solid all the way through. Keep squishing inward, or choose Carve in Cut to scoop it away.</p></div></div><div class="help-step">${icon('blend')}<div><strong>A little shape, a whole new idea.</strong><p>Open Shapes, pick a ball, egg, pill, or soft cube, then tap your clay. Drag the preview into place before lifting your finger. Soft blend melts joins together, and Shape size changes how much clay you add.</p></div></div><div class="help-step">${icon('hole')}<div><strong>Make a little window.</strong><p>Open Cut and choose Hole. Tap the clay to cut a tunnel through both sides. Drag before lifting to place it. Open Finish for Flatten, Smooth, and a gentle Polish. All these tools work with Mirror magic.</p></div></div><div class="help-step">${icon('paint')}<div><strong>A splash of you.</strong><p>Open Draw for a crisp Pen, soft Brush, misty Spray, or Fill all. Change pen size and color strength there. The Color button shows your current color; open it to choose another. Shape also has a Clay pen for drawing raised lines beyond an edge. Mirror magic paints or sculpts both sides at once.</p></div></div><div class="help-step">${icon('orbit')}<div><strong>Your own little pottery wheel.</strong><p>Switch on the wheel by the zoom buttons. It keeps turning while you sculpt or paint—even while you hold still. Drag empty space to look around, or use two fingers to turn and pinch to zoom. The four-arrow Move button shifts your view of the whole creation. Tap the percentage to center it again.</p></div></div><div class="help-step">${icon('heart')}<div><strong>A fresh shape, in a little moment.</strong><p>Melt back to a ball in New clay softly returns your clay to a ball and keeps your colors. Undo brings your shape back. Your clay saves on this device; download a clai file for a backup.</p></div></div></div><div class="help-keys">Keyboard: <kbd>1</kbd>–<kbd>5</kbd> tools · <kbd>6</kbd> reset shape · <kbd>7</kbd> add shapes · <kbd>8</kbd> hole · <kbd>9</kbd> carve · <kbd>M</kbd> move · <kbd>Ctrl/⌘ Z</kbd> undo · <kbd>Shift Z</kbd> with Ctrl/⌘ to redo · <kbd>[</kbd> <kbd>]</kbd> brush size · <kbd>0</kbd> reset view<br>Right-drag or hold <kbd>Space</kbd> on the canvas to turn. A stylus can control pressure.</div>`,'A QUICK LITTLE HOW-TO');
 }
 function download(blob,filename){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
 function safeName(){return name().replace(/[^a-zA-Z0-9 _-]/g,'').trim().replace(/\s+/g,'-').toLowerCase()||'my-clai';}
@@ -114,11 +162,12 @@ async function showShelf(){
   $('import-project').onclick=()=>$('import-file').click();
 }
 function restoreHistory(direction){studio.finishGesture();const state=direction==='undo'?history.undo():history.redo();if(!state)return;studio.load(state);$('project-name').value=state.name;shelfId=null;refreshHistory();scheduleSave();}
-function changeSize(value){$('brush-size').value=String(value);const size=Number($('brush-size').value);studio.radius=size/100;$('brush-size-value').textContent=size<28?'S':size<55?'M':'L';$('brush-size').style.setProperty('--fill',`${(size-12)/68*100}%`);studio.brushRing.scale.setScalar(studio.radius);studio.requestRender();}
+function fillRange(input){input.style.setProperty('--fill',`${(Number(input.value)-Number(input.min))/(Number(input.max)-Number(input.min))*100}%`);}
+function changeSize(value){const size=Math.max(12,Math.min(150,Number(value)||42));$('brush-size').value=String(size);studio.radius=size/100;$('brush-size-value').textContent=size<28?'S':size<65?'M':size<100?'L':'XL';fillRange($('brush-size'));studio.brushRing.scale.setScalar(studio.brushRadius?.()||studio.radius);studio.requestRender();}
 
 async function start(){
   try{
-    studio=new Studio($('viewport'),{onChange:changed,onZoom:z=>$('reset-view').innerHTML=`${z}<span>%</span>`,onFirstSculpt:()=>$('workspace').classList.add('focus-mode'),onError:toast,onSound:tool=>audio.sound(tool),onResetState:active=>{const button=$('reset-shape');if(button){button.disabled=active;button.setAttribute('aria-busy',String(active));}$('more-tools').classList.toggle('is-resetting',active);}});
+    studio=new Studio($('viewport'),{onChange:changed,onZoom:z=>$('reset-view').innerHTML=`${z}<span>%</span>`,onFirstSculpt:()=>$('workspace').classList.add('focus-mode'),onError:toast,onSound:tool=>audio.sound(tool),onResetState:active=>{const button=$('reset-shape');if(button){button.disabled=active;button.setAttribute('aria-busy',String(active));}$('new-clay').classList.toggle('is-resetting',active);}});
   }catch(error){
     $('loading').innerHTML=`<div class="webgl-error"><h2>The clay needs a little graphics help.</h2><p>This browser couldn’t open a 3D canvas. Try a current browser with WebGL enabled.</p><button class="button" id="retry-canvas">Try again</button></div>`;$('retry-canvas').onclick=()=>location.reload();
     ['keep','open-shelf','new-clay'].forEach(id=>$(id).disabled=true);return;
@@ -133,14 +182,18 @@ async function start(){
   $('project-name').value=initial.name;history.push(studio.snapshot(name()));loading=false;refreshHistory();
   $('loading').classList.add('done');setTimeout(()=>$('loading').hidden=true,450);
   if(storageAvailable)await saveCurrent();else setStatus('Download to keep your clay',false);
-  $('swatches').innerHTML=palette.map(([label,color],i)=>`<button class="swatch${i===0?' selected':''}" style="--color:${color}" data-color="${color}" aria-label="Paint with ${label.toLowerCase()}" title="${label}" aria-pressed="${i===0}"></button>`).join('');
-  document.querySelectorAll('.swatch').forEach(b=>b.onclick=()=>selectColor(b.dataset.color));
-  document.querySelectorAll('button[data-tool]').forEach(b=>b.onclick=()=>selectTool(b.dataset.tool));
-  $('custom-color').oninput=e=>selectColor(e.target.value);selectColor(selectedColor,false);
+  selectColor(selectedColor,false);selectTool('push');
+  document.querySelectorAll('[data-folder]').forEach(button=>button.onclick=e=>{showFolder(button.dataset.folder,button);if(e.detail===0&&!$('tool-drawer').hidden)$('drawer-content').querySelector('button,input')?.focus();});
+  $('current-tool').onclick=()=>showFolder(toolFolder(studio.tool),$('current-tool'));
+  $('close-drawer').onclick=()=>closeDrawer(true);
+  document.addEventListener('pointerdown',e=>{if(openFolder&&!e.target.closest('#tool-drawer,[aria-controls="tool-drawer"]'))closeDrawer();audio.resume();},{capture:true,passive:true});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&openFolder){e.preventDefault();closeDrawer(true);return;}if(!openFolder||!e.target.matches('.folder-choice,.shape-card,.swatch'))return;const list=[...e.target.parentElement.querySelectorAll('button')],index=list.indexOf(e.target);let next;if(['ArrowRight','ArrowDown'].includes(e.key))next=(index+1)%list.length;if(['ArrowLeft','ArrowUp'].includes(e.key))next=(index+list.length-1)%list.length;if(e.key==='Home')next=0;if(e.key==='End')next=list.length-1;if(next!==undefined){e.preventDefault();list[next].focus();}});
+  window.addEventListener('resize',positionDrawer);
+  $('brush-strength').oninput=e=>{studio.brushStrength=Number(e.target.value)/100;$('brush-strength-value').textContent=studio.brushStrength<.65?'Feather':studio.brushStrength>1.15?'Firm':'Gentle';fillRange(e.target);};
   $('brush-size').oninput=e=>changeSize(e.target.value);changeSize(42);
   $('mirror').onclick=()=>{studio.mirror=!studio.mirror;$('mirror').setAttribute('aria-pressed',String(studio.mirror));toast(studio.mirror?'Both sides, a little magic.':'One side at a time.');};
   $('undo').onclick=()=>restoreHistory('undo');$('redo').onclick=()=>restoreHistory('redo');
-  $('new-clay').onclick=showStarters;$('add-shape').onclick=showPrimitives;$('more-tools').onclick=showMoreTools;$('move-object').onclick=()=>selectTool(studio.tool==='move'?'push':'move');$('sound').onclick=showSound;$('help').onclick=showHelp;$('keep').onclick=showKeep;$('open-shelf').onclick=showShelf;
+  $('new-clay').onclick=showStarters;$('move-object').onclick=()=>selectTool(studio.tool==='move'?'push':'move');$('sound').onclick=showSound;$('help').onclick=showHelp;$('keep').onclick=showKeep;$('open-shelf').onclick=showShelf;
   $('close-modal').onclick=closeModal;$('modal').addEventListener('click',e=>{if(e.target===$('modal')){const r=$('modal').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeModal();}});
   $('zoom-in').onclick=()=>studio.zoomBy(1.15);$('zoom-out').onclick=()=>studio.zoomBy(1/1.15);$('reset-view').onclick=()=>studio.resetView();
   $('spin').onclick=()=>{const active=studio.toggleSpin();$('spin').setAttribute('aria-pressed',String(active));$('spin').setAttribute('aria-label',active?'Turn pottery wheel off':'Turn pottery wheel on');};
@@ -166,7 +219,6 @@ async function start(){
     if(e.key===']')changeSize(Number($('brush-size').value)+5);
     if(e.key==='0')studio.resetView();
   });
-  $('viewport').addEventListener('pointerdown',()=>audio.resume(),{passive:true});
   document.addEventListener('click',e=>{if(e.target.closest('button'))audio.sound('tap');});
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&revision!==savedRevision)saveCurrent();});
   window.addEventListener('pagehide',()=>{if(revision!==savedRevision)saveCurrent();});

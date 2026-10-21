@@ -1,7 +1,7 @@
 import * as THREE from './vendor/three.module.js';
 import {ellipsoid,adjacency,SpatialHash,applyBrush,ballSurface,attachClaySafety,syncClaySurface,protectedClay} from './sculpt.js';
 import {PRIMITIVES,primitiveBasis,blendPrimitive} from './primitives.js';
-import {createVolume,restoreVolume,cloneVolume,volumeFromRadial,meshVolume,editVolume} from './volume.js';
+import {createVolume,restoreVolume,cloneVolume,volumeFromRadial,meshVolume,editVolume,volumeStep,resizeVolume,VOLUME} from './volume.js';
 
 const CLAY='#ed8857',CREAM='#f8dbad',INK='#343b32';
 export function createPreset(type='head',color=CLAY){
@@ -64,11 +64,11 @@ export class Studio {
   constructor(container,{onChange=()=>{},onZoom=()=>{},onFirstSculpt=()=>{},onError=()=>{},onResetState=()=>{},onSound=()=>{}}={}){
     this.container=container;this.onChange=onChange;this.onZoom=onZoom;this.onFirstSculpt=onFirstSculpt;this.onError=onError;this.onResetState=onResetState;this.onSound=onSound;
     this.volume=null;this.strokeBackup=null;
-    this.tool='push';this.radius=.42;this.color=new THREE.Color(CLAY);this.mirror=false;
+    this.tool='push';this.radius=.42;this.brushStrength=1;this.paintStyle='pen';this.paintOpacity=1;this.color=new THREE.Color(CLAY);this.mirror=false;
     this.primitiveType='ball';this.primitiveBlend=.22;this.previewPointer=null;this.primitivePreview=null;this.primitiveGeometries={};
     this.theta=.24;this.phi=1.36;this.distance=8.6;this.zoom=1;this.baseDistance=8.6;
     this.target=new THREE.Vector3(0,.15,0);this.pointers=new Map();this.meshes=[];this.raf=0;this.pending=null;this.spin=false;this.dirty=false;this.changed=false;this.lastTime=0;this.visible=true;this.resetAnimation=null;
-    this.scene=new THREE.Scene();this.camera=new THREE.PerspectiveCamera(38,1,.1,70);
+    this.scene=new THREE.Scene();this.camera=new THREE.PerspectiveCamera(38,1,.05,800);
     this.renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.75));
     this.renderer.setClearColor(0x000000,0);this.renderer.outputColorSpace=THREE.SRGBColorSpace;
@@ -80,9 +80,9 @@ export class Studio {
     this.group=new THREE.Group();this.scene.add(this.group);
     this.scene.add(new THREE.HemisphereLight(0xfffaee,0xa5b49a,2.2));
     const key=new THREE.DirectionalLight(0xfff4e3,3.2);key.position.set(-3,6,5);key.castShadow=true;
-    key.shadow.mapSize.set(1024,1024);Object.assign(key.shadow.camera,{left:-4,right:4,top:4,bottom:-4,near:.5,far:20});key.shadow.normalBias=.035;key.shadow.bias=-.0003;this.scene.add(key);
+    key.shadow.mapSize.set(1024,1024);Object.assign(key.shadow.camera,{left:-4,right:4,top:4,bottom:-4,near:.5,far:20});key.shadow.normalBias=.035;key.shadow.bias=-.0003;this.scene.add(key);this.keyLight=key;this.scene.add(key.target);
     const fill=new THREE.DirectionalLight(0xf1f8ff,.9);fill.position.set(4,2,0);this.scene.add(fill);
-    const floor=new THREE.Mesh(new THREE.PlaneGeometry(30,30),new THREE.ShadowMaterial({opacity:.13}));floor.rotation.x=-Math.PI/2;floor.position.y=-1.32;floor.receiveShadow=true;this.scene.add(floor);
+    const floor=new THREE.Mesh(new THREE.PlaneGeometry(150,150),new THREE.ShadowMaterial({opacity:.13}));floor.rotation.x=-Math.PI/2;floor.position.y=-1.32;floor.receiveShadow=true;this.scene.add(floor);
     const shadowCanvas=document.createElement('canvas');shadowCanvas.width=shadowCanvas.height=128;
     const ctx=shadowCanvas.getContext('2d'),gradient=ctx.createRadialGradient(64,64,3,64,64,64);gradient.addColorStop(0,'rgba(67,76,45,0.18)');gradient.addColorStop(.5,'rgba(67,76,45,0.07)');gradient.addColorStop(1,'rgba(67,76,45,0)');ctx.fillStyle=gradient;ctx.fillRect(0,0,128,128);
     const shadow=new THREE.Mesh(new THREE.PlaneGeometry(4.3,3.3),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(shadowCanvas),transparent:true,depthWrite:false}));shadow.rotation.x=-Math.PI/2;shadow.position.y=-1.315;this.scene.add(shadow);
@@ -101,13 +101,14 @@ export class Studio {
     const portrait=width<=height,mobile=portrait&&width<640;
     const halfFov=Math.tan(19*Math.PI/180);
     this.baseDistance=portrait?Math.max(8.8,2.9/(2*halfFov*this.camera.aspect)*1.25):8.6;
-    if(mobile)this.baseDistance=Math.max(this.baseDistance,height*4.2/(2*halfFov*Math.max(120,height-250)));
+    if(mobile)this.baseDistance=Math.max(this.baseDistance,height*4.2/(2*halfFov*Math.max(120,height-160)));
     this.camera.setViewOffset(width,height,width*(width>1000?-.04:0),height*(mobile?.03:.015),width,height);
     this.camera.updateProjectionMatrix();this.renderer.setSize(width,height);this.updateCamera();this.requestRender();
   }
   updateCamera(){
     const distance=this.baseDistance/this.zoom;
     this.camera.position.set(this.target.x+distance*Math.sin(this.phi)*Math.sin(this.theta),this.target.y+distance*Math.cos(this.phi),this.target.z+distance*Math.sin(this.phi)*Math.cos(this.theta));
+    this.camera.far=Math.max(800,distance*2);this.camera.updateProjectionMatrix();
     this.camera.lookAt(this.target);this.camera.updateMatrixWorld();
   }
   meshFromData(data){
@@ -153,6 +154,11 @@ export class Studio {
     const index=geometry.getIndex();if(index&&index.array.length===data.indices.length){index.array.set(data.indices);index.needsUpdate=true;}else geometry.setIndex(new THREE.BufferAttribute(data.indices,1));
     mesh.userData={positions:geometry.attributes.position.array,colors:geometry.attributes.color.array,indices:geometry.index.array};
     geometry.computeBoundingSphere();geometry.computeBoundingBox();this.renderer.shadowMap.needsUpdate=true;
+    if(this.keyLight){
+      const bound=geometry.boundingSphere,extent=Math.max(4,bound.radius*1.5),light=this.keyLight;
+      light.target.position.copy(bound.center);light.position.copy(bound.center).add(new THREE.Vector3(-.6,1.2,1).multiplyScalar(extent));
+      Object.assign(light.shadow.camera,{left:-extent,right:extent,top:extent,bottom:-extent,far:extent*5});light.shadow.camera.updateProjectionMatrix();
+    }
   }
   setTool(tool){this.tool=tool;this.container.dataset.tool=tool;this.brushRing.visible=false;this.previewPointer=null;if(this.primitivePreview)this.primitivePreview.visible=false;this.requestRender();}
   setColor(hex){this.color.set(hex);this.primitivePreview?.material.color.copy(this.color);}
@@ -174,7 +180,8 @@ export class Studio {
     if(!this.primitivePreview){this.primitivePreview=new THREE.Mesh(this.primitiveGeometries[type],new THREE.MeshStandardMaterial({color:this.color,transparent:true,opacity:.37,roughness:.8,depthWrite:false}));this.primitivePreview.visible=false;this.scene.add(this.primitivePreview);}
     this.primitivePreview.geometry=this.primitiveGeometries[type];this.setTool('stamp');
   }
-  primitiveSize(){return .28+this.radius;}
+  brushRadius(){const h=this.volume?volumeStep(this.volume):.1125,paint=this.tool==='paint'||this.tool==='fill';return Math.max(this.radius,paint?h*1.1:h*2.1,this.tool==='hole'?.27:paint?.12:.22);}
+  primitiveSize(){return Math.max(.28+this.radius,this.volume?volumeStep(this.volume)*2.5:0);}
   showPrimitive(hit){
     if(!this.primitivePreview)return;
     this.previewHit=hit;
@@ -198,15 +205,15 @@ export class Studio {
     const p=mesh.userData.positions,v=new THREE.Vector3(),mobile=this.width<=this.height&&this.width<640;
     let factor=1;
     for(let j=0;j<p.length;j+=3){v.fromArray(p,j).project(this.camera);factor=Math.max(factor,Math.abs(v.x)/.78,v.y/(mobile?.68:.82),-v.y/(mobile?.48:.66));}
-    if(factor>1.07&&this.zoom>.55)this.zoomBy(1/(factor*1.03));
+    if(factor>1.07&&this.zoom>.08)this.zoomBy(1/(factor*1.03));
   }
-  zoomBy(factor){this.zoom=THREE.MathUtils.clamp(this.zoom*factor,.55,2.2);this.updateCamera();this.onZoom(Math.round(this.zoom*100));this.requestRender();}
-  resetView(){this.theta=.24;this.phi=1.36;this.zoom=1;this.target.set(0,.15,0);this.updateCamera();this.onZoom(100);this.requestRender();}
+  zoomBy(factor){this.zoom=THREE.MathUtils.clamp(this.zoom*factor,.08,4);this.updateCamera();this.onZoom(Math.round(this.zoom*100));this.requestRender();}
+  resetView(){this.theta=.24;this.phi=1.36;this.zoom=1;this.target.set(0,.15,0);this.updateCamera();this.onZoom(100);if(this.volume&&this.volume.extent>VOLUME.extent){this.target.copy(this.meshes[0].geometry.boundingSphere.center);this.updateCamera();this.fitAfterAddition(this.meshes[0]);}this.requestRender();}
   toggleSpin(){this.spin=!this.spin;this.lastTime=0;this.brushRing.visible=false;this.requestRender();return this.spin;}
   resetShape(){
     if(this.resetAnimation)return false;this.finishGesture();
     if(this.volume){
-      const target=createVolume('ball');
+      const target=createVolume('ball',this.color.toArray(),this.volume.extent);
       if(this.volume.values.every((v,i)=>Math.abs(v-target.values[i])<.0001))return false;
       const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       this.strokeBackup=cloneVolume(this.volume);this.resetAnimation={start:null,duration:reduced?0:800,source:this.volume.values.slice(),target:target.values,last:0};
@@ -227,7 +234,10 @@ export class Studio {
       if(time-animation.last<32&&progress<1)return;animation.last=time;
       for(let i=0;i<this.volume.values.length;i++){const v=animation.source[i]*(1-eased)+animation.target[i]*eased;this.volume.values[i]=Math.abs(v)<.00001?(v<0?-.00001:.00001):v;}
       this.volume.dirty.fill(1);this.volume.meshDirty=true;this.volume.geometryDirty=true;
-      if(progress===1){this.resetAnimation=null;this.onResetState(false);this.changed=true;this.finishGesture();}
+      if(progress===1){
+        if(this.volume.extent>VOLUME.extent){resizeVolume(this.volume,VOLUME.extent);this.volume.values.set(createVolume('ball').values);}
+        this.resetAnimation=null;this.onResetState(false);this.changed=true;this.finishGesture();
+      }
       return;
     }
     for(let j=0;j<this.meshes.length;j++){
@@ -248,7 +258,7 @@ export class Studio {
     if(this.pending){const e=this.pending;this.pending=null;this.handleMove(e);}
     if(this.tool==='stamp'&&this.previewPointer&&!this.resetAnimation&&this.mode!=='gesture'&&this.mode!=='orbit')this.showPrimitive(this.spin?this.hit(this.previewPointer.x,this.previewPointer.y):this.previewHit);
     if(this.tool==='hole'&&this.previewPointer&&this.spin&&this.mode==='hole')this.showBrush(this.hit(this.previewPointer.x,this.previewPointer.y));
-    const heldTool=this.tool==='grow'||this.tool==='carve';
+    const heldTool=['push','grow','carve','smooth','polish','flatten'].includes(this.tool)||(this.tool==='paint'&&this.paintStyle==='spray');
     if(this.touchStart&&(this.spin||heldTool)&&time-this.touchStart.time>100)this.touchStart=null;
     const continuous=(this.spin||heldTool)&&this.mode==='sculpt'&&this.pointers.size===1&&!this.touchStart&&!this.resetAnimation;
     if(continuous){
@@ -264,14 +274,14 @@ export class Studio {
   showBrush(hit){
     if(this.tool==='stamp'){this.brushRing.visible=false;this.showPrimitive(hit);return;}
     if(!hit||this.tool==='orbit'||this.tool==='move'){this.brushRing.visible=false;return;}
-    const normal=this.tool==='hole'?this.camera.getWorldDirection(new THREE.Vector3()).negate():hit.face.normal.clone().normalize();this.brushRing.position.copy(hit.point).addScaledVector(normal,.012);this.brushRing.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),normal);this.brushRing.scale.setScalar(Math.max(this.tool==='hole'?.27:this.tool==='paint'?.12:.22,this.radius));this.brushRing.material.color.set(this.tool==='hole'||this.tool==='carve'?'#688fb6':'#fffdf0');this.brushRing.visible=true;
+    const normal=this.tool==='hole'?this.camera.getWorldDirection(new THREE.Vector3()).negate():hit.face.normal.clone().normalize();this.brushRing.position.copy(hit.point).addScaledVector(normal,.012);this.brushRing.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),normal);this.brushRing.scale.setScalar(this.brushRadius());this.brushRing.material.color.set(['hole','carve','engrave'].includes(this.tool)?'#688fb6':'#fffdf0');this.brushRing.visible=true;
   }
   dab(hit,event,drag=[0,0,0],rate=1){
     if(!hit||this.editBlocked)return;
     const point=hit.point.toArray(),normal=hit.face.normal.toArray();
-    const strength=(event.pointerType==='pen'?THREE.MathUtils.clamp(event.pressure*1.7,.25,1.6):.9)*rate;
+    const strength=(event.pointerType==='pen'?THREE.MathUtils.clamp(event.pressure*1.7,.15,1.6):.9)*rate*(['paint','fill','hole'].includes(this.tool)?1:(this.brushStrength??1));
     if(this.volume){
-      const affected=editVolume(this.volume,{point,normal,tool:this.tool,radius:this.radius,strength,color:this.color.toArray(),drag,mirror:this.mirror,direction:this.camera.getWorldDirection(new THREE.Vector3()).toArray()});
+      const affected=editVolume(this.volume,{point,normal,tool:this.tool,radius:this.brushRadius(),strength,color:this.color.toArray(),drag,mirror:this.mirror,paintStyle:this.paintStyle,opacity:this.paintOpacity,direction:this.camera.getWorldDirection(new THREE.Vector3()).toArray()});
       if(affected){this.changed=true;this.onFirstSculpt();this.onSound?.(this.tool);}
       return;
     }
@@ -296,6 +306,7 @@ export class Studio {
       this.lastPointer={x:e.clientX,y:e.clientY};this.changed=false;this.editBlocked=false;this.activeBrushEvent={clientX:e.clientX,clientY:e.clientY,pointerType:e.pointerType,pressure:e.pressure};
       if(this.volume&&['sculpt','stamp','hole'].includes(this.mode))this.strokeBackup=cloneVolume(this.volume);
       if(this.mode==='sculpt'){
+        this.strokeHit=hit;
         this.surfaceNormal.copy(this.camera.getWorldDirection(new THREE.Vector3()));this.strokePlane.setFromNormalAndCoplanarPoint(this.surfaceNormal,hit.point);this.previousWorld.copy(hit.point);
         if(e.pointerType==='touch')this.touchStart={hit,event:e,x:e.clientX,y:e.clientY,time:performance.now()};
         else{this.dab(hit,e);this.showBrush(hit);}
@@ -349,28 +360,41 @@ export class Studio {
     if(this.mode==='orbit'){this.theta-=dx*.007;this.phi=THREE.MathUtils.clamp(this.phi-dy*.006,.28,2.65);this.updateCamera();}
     else if(this.mode==='move'){
       const scale=2*(this.baseDistance/this.zoom)*Math.tan(19*Math.PI/180)/this.height,right=new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld,0),up=new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld,1);
-      this.target.addScaledVector(right,-dx*scale).addScaledVector(up,dy*scale);this.target.clamp(new THREE.Vector3(-2,-1.8,-2),new THREE.Vector3(2,2.3,2));this.updateCamera();this.onFirstSculpt();
+      this.target.addScaledVector(right,-dx*scale).addScaledVector(up,dy*scale);this.target.clampScalar(-100,100);this.updateCamera();this.onFirstSculpt();
     }
     else if(this.mode==='stamp'){this.previewPointer={x:e.clientX,y:e.clientY};this.showPrimitive(this.hit(e.clientX,e.clientY));}
     else if(this.mode==='hole'){this.previewPointer={x:e.clientX,y:e.clientY};this.showBrush(this.hit(e.clientX,e.clientY));}
     else if(this.mode==='sculpt'){
       this.activeBrushEvent=e;
-      if(this.spin||this.tool==='grow'||this.tool==='carve'){this.lastPointer={x:e.clientX,y:e.clientY};return;}
-      const steps=Math.max(1,Math.min(6,Math.ceil(Math.hypot(dx,dy)/8)));
+      const canExtend=['pull','clay','grow'].includes(this.tool),radius=this.brushRadius();
+      // Subdivide in world space too: a zoomed-out stroke must not leave gaps.
+      this.hit(e.clientX,e.clientY);
+      const end=new THREE.Vector3(),onPlane=this.raycaster.ray.intersectPlane(this.strokePlane,end);
+      const distance=onPlane?end.distanceTo(this.previousWorld):0;
+      const steps=Math.max(1,Math.min(32,Math.ceil(Math.max(Math.hypot(dx,dy)/6,distance/(radius*.22)))));
       for(let s=1;s<=steps;s++){
-        const hit=this.hit(this.lastPointer.x+dx*s/steps,this.lastPointer.y+dy*s/steps);
-        if(hit){
-          const world=new THREE.Vector3();this.raycaster.ray.intersectPlane(this.strokePlane,world);
-          const delta=world.clone().sub(this.previousWorld).clampLength(0,.12);this.previousWorld.copy(world);
-          this.dab(hit,e,delta.toArray());this.showBrush(hit);
+        const hit=this.hit(this.lastPointer.x+dx*s/steps,this.lastPointer.y+dy*s/steps),world=new THREE.Vector3();
+        const intersects=this.raycaster.ray.intersectPlane(this.strokePlane,world);
+        if(!intersects)continue;
+        const delta=world.clone().sub(this.previousWorld);
+        // A clay pen or stretch can follow the hand beyond the silhouette.
+        // Keep the stroke's depth and normal, never switch an active edit to orbit.
+        let brushHit=hit;
+        if(this.tool==='pull'&&this.strokeHit)brushHit={object:this.strokeHit.object,point:this.strokeHit.point.clone().addScaledVector(delta,.5),face:this.strokeHit.face};
+        else if((!hit&&canExtend||this.tool==='clay')&&this.strokeHit)brushHit={object:this.strokeHit.object,point:this.strokeHit.point.clone().add(delta),face:this.strokeHit.face};
+        if(brushHit){
+          this.dab(brushHit,e,delta.toArray(),this.tool==='fill'?1:Math.min(1,Math.max(.3,delta.length()/(radius*.18))));this.showBrush(brushHit);
+          this.strokeHit=this.tool==='pull'?{...brushHit,point:brushHit.point.clone().addScaledVector(delta,.5)}:brushHit;
         }else this.brushRing.visible=false;
+        this.previousWorld.copy(world);
       }
+
     }
     this.lastPointer={x:e.clientX,y:e.clientY};
   }
   finishGesture(){
     this.flushVolume();
-    this.pending=null;this.mode=null;this.gesture=null;this.touchStart=null;this.activeBrushEvent=null;
+    this.pending=null;this.mode=null;this.gesture=null;this.strokeHit=null;this.touchStart=null;this.activeBrushEvent=null;
     const ids=[...this.pointers.keys()];this.pointers.clear();for(const id of ids)if(this.container.hasPointerCapture(id))this.container.releasePointerCapture(id);
     this.brushRing.visible=false;this.previewPointer=null;if(this.primitivePreview)this.primitivePreview.visible=false;if(this.changed){this.changed=false;this.onChange();}this.strokeBackup=null;this.editBlocked=false;
   }
