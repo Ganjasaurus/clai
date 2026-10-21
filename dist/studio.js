@@ -1,7 +1,7 @@
 import * as THREE from './vendor/three.module.js';
 import {ellipsoid,adjacency,SpatialHash,applyBrush,ballSurface,attachClaySafety,syncClaySurface,protectedClay} from './sculpt.js';
 import {PRIMITIVES,primitiveBasis,blendPrimitive} from './primitives.js';
-import {createVolume,restoreVolume,cloneVolume,volumeFromRadial,meshVolume,editVolume,volumeStep,resizeVolume,VOLUME} from './volume.js';
+import {createVolume,restoreVolume,cloneVolume,volumeFromRadial,meshVolume,editVolume,volumeStep,resetVolumeGrid,ballResetValues,VOLUME} from './volume.js';
 
 const CLAY='#ed8857',CREAM='#f8dbad',INK='#343b32';
 export function createPreset(type='head',color=CLAY){
@@ -190,10 +190,16 @@ export class Studio {
     this.primitivePreview.position.copy(hit.point).addScaledVector(normal,size*.08);this.primitivePreview.scale.setScalar(size);
     this.primitivePreview.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...basis.slice(0,3)),new THREE.Vector3(...basis.slice(3,6)),new THREE.Vector3(...basis.slice(6,9))));
   }
+  editSolid(options){
+    try{return editVolume(this.volume,options);}catch(error){
+      if(this.strokeBackup){this.volume=restoreVolume(this.strokeBackup);this.strokeBackup=null;this.changed=false;}
+      this.editBlocked=true;this.onError(error.message);return 0;
+    }
+  }
   stamp(hit){
     if(!hit||this.editBlocked)return false;
     if(this.volume){
-      const changed=editVolume(this.volume,{tool:'stamp',type:this.primitiveType,point:hit.point.toArray(),normal:hit.face.normal.toArray(),size:this.primitiveSize(),blend:this.primitiveBlend,color:this.color.toArray(),mirror:this.mirror});
+      const changed=this.editSolid({tool:'stamp',type:this.primitiveType,point:hit.point.toArray(),normal:hit.face.normal.toArray(),size:this.primitiveSize(),blend:this.primitiveBlend,color:this.color.toArray(),mirror:this.mirror});
       if(changed){this.changed=true;this.flushVolume();this.onFirstSculpt();this.onSound?.('stamp');this.fitAfterAddition(hit.object);}
       return changed>0;
     }
@@ -208,15 +214,15 @@ export class Studio {
     if(factor>1.07&&this.zoom>.08)this.zoomBy(1/(factor*1.03));
   }
   zoomBy(factor){this.zoom=THREE.MathUtils.clamp(this.zoom*factor,.08,4);this.updateCamera();this.onZoom(Math.round(this.zoom*100));this.requestRender();}
-  resetView(){this.theta=.24;this.phi=1.36;this.zoom=1;this.target.set(0,.15,0);this.updateCamera();this.onZoom(100);if(this.volume&&this.volume.extent>VOLUME.extent){this.target.copy(this.meshes[0].geometry.boundingSphere.center);this.updateCamera();this.fitAfterAddition(this.meshes[0]);}this.requestRender();}
+  resetView(){this.theta=.24;this.phi=1.36;this.zoom=1;this.target.set(0,.15,0);this.updateCamera();this.onZoom(100);if(this.volume&&this.meshes[0].geometry.boundingSphere.radius>2){this.target.copy(this.meshes[0].geometry.boundingSphere.center);this.updateCamera();this.fitAfterAddition(this.meshes[0]);}this.requestRender();}
   toggleSpin(){this.spin=!this.spin;this.lastTime=0;this.brushRing.visible=false;this.requestRender();return this.spin;}
   resetShape(){
     if(this.resetAnimation)return false;this.finishGesture();
     if(this.volume){
-      const target=createVolume('ball',this.color.toArray(),this.volume.extent);
-      if(this.volume.values.every((v,i)=>Math.abs(v-target.values[i])<.0001))return false;
+      const target=ballResetValues(this.volume);
+      if(this.volume.values.every((v,i)=>Math.abs(v-target[i])<.0001))return false;
       const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      this.strokeBackup=cloneVolume(this.volume);this.resetAnimation={start:null,duration:reduced?0:800,source:this.volume.values.slice(),target:target.values,last:0};
+      this.strokeBackup=cloneVolume(this.volume);this.resetAnimation={start:null,duration:reduced?0:800,source:this.volume.values.slice(),target,last:0};
       this.onResetState(true);this.onSound?.('reset');this.requestRender();return true;
     }
     if(!this.meshes.some(m=>m.userData.safety.logRadius.some(v=>Math.abs(v)>.00001)))return false;
@@ -235,7 +241,7 @@ export class Studio {
       for(let i=0;i<this.volume.values.length;i++){const v=animation.source[i]*(1-eased)+animation.target[i]*eased;this.volume.values[i]=Math.abs(v)<.00001?(v<0?-.00001:.00001):v;}
       this.volume.dirty.fill(1);this.volume.meshDirty=true;this.volume.geometryDirty=true;
       if(progress===1){
-        if(this.volume.extent>VOLUME.extent){resizeVolume(this.volume,VOLUME.extent);this.volume.values.set(createVolume('ball').values);}
+        if(this.volume.step!==VOLUME.step||this.volume.size.some(n=>n!==VOLUME.size)||this.volume.origin.some(v=>Math.abs(v+VOLUME.extent)>.000001))this.volume=resetVolumeGrid(this.volume);
         this.resetAnimation=null;this.onResetState(false);this.changed=true;this.finishGesture();
       }
       return;
@@ -281,7 +287,7 @@ export class Studio {
     const point=hit.point.toArray(),normal=hit.face.normal.toArray();
     const strength=(event.pointerType==='pen'?THREE.MathUtils.clamp(event.pressure*1.7,.15,1.6):.9)*rate*(['paint','fill','hole'].includes(this.tool)?1:(this.brushStrength??1));
     if(this.volume){
-      const affected=editVolume(this.volume,{point,normal,tool:this.tool,radius:this.brushRadius(),strength,color:this.color.toArray(),drag,mirror:this.mirror,paintStyle:this.paintStyle,opacity:this.paintOpacity,direction:this.camera.getWorldDirection(new THREE.Vector3()).toArray()});
+      const affected=this.editSolid({point,normal,tool:this.tool,radius:this.brushRadius(),strength,color:this.color.toArray(),drag,mirror:this.mirror,paintStyle:this.paintStyle,opacity:this.paintOpacity,direction:this.camera.getWorldDirection(new THREE.Vector3()).toArray()});
       if(affected){this.changed=true;this.onFirstSculpt();this.onSound?.(this.tool);}
       return;
     }
@@ -330,7 +336,7 @@ export class Studio {
       if(this.touchStart&&this.pointers.size===1&&e.type==='pointerup')this.dab(this.touchStart.hit,this.touchStart.event);
       this.touchStart=null;this.pointers.delete(e.pointerId);if(el.hasPointerCapture(e.pointerId))el.releasePointerCapture(e.pointerId);
       this.brushRing.visible=false;
-      if(this.pointers.size){this.mode='orbit';const p=this.pointers.values().next().value;this.lastPointer={...p};}
+      if(this.pointers.size){this.mode=this.mode==='gesture'||this.mode==='gesture-end'?'gesture-end':'orbit';const p=this.pointers.values().next().value;this.lastPointer={...p};}
       else this.finishGesture();this.requestRender();
     };
     el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);el.addEventListener('lostpointercapture',e=>{if(this.pointers.has(e.pointerId))up(e);});
@@ -343,13 +349,17 @@ export class Studio {
     this.renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();this.finishGesture();this.visible=false;if(this.raf)cancelAnimationFrame(this.raf);this.raf=0;this.onError('The canvas paused. Your clay is safe; try reloading to keep playing.');});
     this.renderer.domElement.addEventListener('webglcontextrestored',()=>{this.visible=true;this.renderer.shadowMap.needsUpdate=true;this.requestRender();this.onError('Your canvas is ready again.');});
   }
+  panCamera(dx,dy){
+    const scale=2*(this.baseDistance/this.zoom)*Math.tan(this.camera.fov*Math.PI/360)/this.height,right=new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld,0),up=new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld,1);
+    this.target.addScaledVector(right,-dx*scale).addScaledVector(up,dy*scale);this.target.clampScalar(-100,100);this.updateCamera();
+  }
   setGestureBaseline(){const [a,b]=Array.from(this.pointers.values());if(!b)return;this.gesture={distance:Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)),x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
   handleMove(e){
     if(!this.pointers.has(e.pointerId)){if(!this.pointers.size&&e.pointerType!=='touch'){this.previewPointer={x:e.clientX,y:e.clientY};this.showBrush(this.hit(e.clientX,e.clientY));}return;}
     this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
     if(this.pointers.size>=2){
       const [a,b]=Array.from(this.pointers.values()),distance=Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)),x=(a.x+b.x)/2,y=(a.y+b.y)/2;
-      if(this.gesture){this.zoomBy(distance/this.gesture.distance);this.theta-=(x-this.gesture.x)*.007;this.phi=THREE.MathUtils.clamp(this.phi-(y-this.gesture.y)*.006,.28,2.65);this.updateCamera();}
+      if(this.gesture){this.zoomBy(distance/this.gesture.distance);this.panCamera(x-this.gesture.x,y-this.gesture.y);}
       this.gesture={distance,x,y};this.brushRing.visible=false;return;
     }
     if(this.touchStart){
@@ -359,8 +369,7 @@ export class Studio {
     const dx=e.clientX-this.lastPointer.x,dy=e.clientY-this.lastPointer.y;
     if(this.mode==='orbit'){this.theta-=dx*.007;this.phi=THREE.MathUtils.clamp(this.phi-dy*.006,.28,2.65);this.updateCamera();}
     else if(this.mode==='move'){
-      const scale=2*(this.baseDistance/this.zoom)*Math.tan(19*Math.PI/180)/this.height,right=new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld,0),up=new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld,1);
-      this.target.addScaledVector(right,-dx*scale).addScaledVector(up,dy*scale);this.target.clampScalar(-100,100);this.updateCamera();this.onFirstSculpt();
+      this.panCamera(dx,dy);this.onFirstSculpt();
     }
     else if(this.mode==='stamp'){this.previewPointer={x:e.clientX,y:e.clientY};this.showPrimitive(this.hit(e.clientX,e.clientY));}
     else if(this.mode==='hole'){this.previewPointer={x:e.clientX,y:e.clientY};this.showBrush(this.hit(e.clientX,e.clientY));}

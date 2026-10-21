@@ -32,21 +32,21 @@
       <button class="tool" id="add-shape" data-folder="shapes" aria-expanded="false" aria-controls="tool-drawer"><svg class="icon"><use href="./icons.svg#blend"/></svg><span>Shapes</span><i class="folder-notch" aria-hidden="true"></i></button>
       <button class="tool" id="color-button" data-folder="color" aria-expanded="false" aria-controls="tool-drawer" aria-label="Color · Apricot selected"><span class="current-color" id="current-color" aria-hidden="true"></span><span>Color</span><i class="folder-notch" aria-hidden="true"></i></button>
     </nav>
-    <aside id="tool-drawer" class="tool-drawer panel" aria-labelledby="drawer-title" hidden>
-      <div class="drawer-heading"><div><span class="eyebrow" id="drawer-eyebrow">YOUR TOOL FOLDER</span><h2 id="drawer-title">Shape</h2></div><button id="close-drawer" class="icon-button" aria-label="Close tool folder"><svg class="icon"><use href="./icons.svg#close"/></svg></button></div>
+    <aside id="tool-drawer" class="tool-drawer panel selection-strip" aria-label="Tool choices" hidden>
       <div id="drawer-content"></div>
-      <div class="brush-panel" id="brush-panel">
-        <div class="brush-heading"><span class="brush-preview" id="brush-preview"></span><div><strong id="tool-title">A little squish</strong><span id="tool-subtitle">Press the clay inward</span></div></div>
-        <div class="range-label"><label id="brush-size-label" for="brush-size">Brush size</label><output id="brush-size-value">M</output></div><input id="brush-size" type="range" min="12" max="150" value="42" aria-label="Brush size">
-        <div id="strength-setting"><div class="range-label"><label for="brush-strength">Touch</label><output id="brush-strength-value">Gentle</output></div><input id="brush-strength" type="range" min="20" max="150" value="100" aria-label="Brush strength"></div>
-        <button id="mirror" class="mirror-button" aria-pressed="false"><svg class="icon small"><use href="./icons.svg#mirror"/></svg><span>Mirror magic</span><span class="toggle" aria-hidden="true"></span></button>
+      <div id="size-settings" hidden>
+        <div class="setting-row"><label id="brush-size-label" for="brush-size">Size</label><input id="brush-size" type="range" min="12" max="150" value="42" aria-label="Brush size"><output id="brush-size-value" for="brush-size">M</output></div>
+        <div class="setting-row" id="strength-setting"><label for="brush-strength">Touch</label><input id="brush-strength" type="range" min="20" max="150" value="100" aria-label="Brush strength"><output id="brush-strength-value" for="brush-strength">Gentle</output></div>
+        <div class="setting-row" id="opacity-setting" hidden><label for="paint-opacity">Ink</label><input id="paint-opacity" type="range" min="10" max="100" value="100" aria-label="Color strength"><output id="paint-opacity-value" for="paint-opacity">100%</output></div>
+        <div class="setting-row" id="blend-setting" hidden><label for="primitive-blend">Blend</label><input id="primitive-blend" type="range" min="8" max="50" value="22" aria-label="How softly shapes blend"><output id="primitive-blend-value" for="primitive-blend">Soft</output></div>
       </div>
     </aside>
     <div class="view-controls panel"><button class="icon-button" id="move-object" title="Move your creation · M" aria-label="Move your creation" aria-pressed="false"><svg class="icon"><use href="./icons.svg#move"/></svg></button><span class="mini-divider"></span><button class="icon-button" id="zoom-out" title="Zoom out" aria-label="Zoom out"><svg class="icon"><use href="./icons.svg#minus"/></svg></button><button class="zoom-reset" id="reset-view" title="Reset view">100<span>%</span></button><button class="icon-button" id="zoom-in" title="Zoom in" aria-label="Zoom in"><svg class="icon"><use href="./icons.svg#plus"/></svg></button><span class="mini-divider"></span><button class="icon-button" id="spin" title="Pottery wheel · keep turning as you make" aria-label="Turn pottery wheel on" aria-pressed="false"><svg class="icon"><use href="./icons.svg#orbit"/></svg></button></div>
     <div class="creation-label" id="creation-label"><span class="tiny-star">✳</span><span>Made of clay.<br><strong>And a little curiosity.</strong></span></div>
     <div class="history panel"><button class="icon-button" id="undo" disabled title="Undo · Ctrl/⌘ Z" aria-label="Undo"><svg class="icon"><use href="./icons.svg#undo"/></svg></button><button class="icon-button" id="redo" disabled title="Redo · Ctrl/⌘ Shift Z" aria-label="Redo"><svg class="icon"><use href="./icons.svg#redo"/></svg></button></div>
     <div class="bottom-dock">
-      <button id="current-tool" class="button current-tool" aria-label="Squish · open tool settings" aria-expanded="false" aria-controls="tool-drawer"><svg class="icon"><use href="./icons.svg#push"/></svg><span>Squish</span><svg class="icon small"><use href="./icons.svg#chevron"/></svg></button>
+      <button id="mirror" class="button dock-tool" aria-pressed="false" title="Mirror strokes on both sides"><svg class="icon"><use href="./icons.svg#mirror"/></svg><span>Mirror</span></button>
+      <button id="size-button" class="button dock-tool" aria-expanded="false" aria-controls="tool-drawer" title="Brush and pen size"><svg class="icon"><use href="./icons.svg#size"/></svg><span>Size</span></button>
       <button id="new-clay" class="button new-clay" aria-expanded="false" aria-controls="tool-drawer"><svg class="icon"><use href="./icons.svg#plus"/></svg><span>New clay</span></button>
     </div>
     <div class="gesture-hint" id="gesture-hint"><svg class="icon small"><use href="./icons.svg#hand"/></svg><span>Drag clay to squish <b>·</b> Drag the space to turn <b>·</b> Pinch to zoom</span></div>

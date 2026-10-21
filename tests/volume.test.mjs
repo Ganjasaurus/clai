@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from '../dist/vendor/three.module.js';
-import {createVolume,restoreVolume,cloneVolume,meshVolume,editVolume,sampleVolume,volumeFromRadial,VOLUME,encodeVolume,decodeVolume} from '../dist/volume.js';
+import {createVolume,restoreVolume,cloneVolume,meshVolume,editVolume,sampleVolume,volumeFromRadial,VOLUME,encodeVolume,decodeVolume,ensureVolumeRoom,volumeStep} from '../dist/volume.js';
 import {createPreset,Studio} from '../dist/studio.js';
 import {encodeProject,decodeProject,History,attachClaySafety} from '../dist/sculpt.js';
 
@@ -155,32 +155,32 @@ test('snapshots own their changing topology, and empty clay can still save and r
   try{assert.equal(studio.resetShape(),true);studio.animateReset(100);assert.equal(topology(studio.snapshot().meshes[0]).euler,2);}finally{globalThis.window=previous;}
 });
 
-test('Grow passes the old workspace wall with a fixed sample budget and a closed surface',()=>{
-  const f=createVolume('ball'),count=f.values.length,bytes=f.values.byteLength+f.pigment.byteLength;let tip=1.28;
+test('Grow passes the old workspace wall with fixed spacing and bounded samples',()=>{
+  const f=createVolume('ball'),step=volumeStep(f);let tip=1.28;
   for(let i=0;i<100;i++){
     let z=tip+.8;while(z>tip-.8&&sampleVolume(f,0,0,z)>=0)z-=.015;tip=z;
     editVolume(f,{tool:'grow',point:[0,0,tip],normal:[0,0,1],radius:.55,strength:1});
   }
-  assert.ok(tip>4.5,`Growth reaches ${tip}`);assert.ok(f.extent>VOLUME.extent);assert.equal(f.values.length,count);assert.equal(f.values.byteLength+f.pigment.byteLength,bytes);
+  assert.ok(tip>4.5,`Growth reaches ${tip}`);assert.ok(f.size.some(n=>n>VOLUME.size));assert.equal(volumeStep(f),step);assert.ok(f.values.length<=VOLUME.maxSamples);
   assert.ok(sampleVolume(f,0,0,0)<0,'the original clay still exists');topology(meshVolume(f));
 });
 
 test('long stretches keep a rounded connection instead of thinning out and stalling',()=>{
   const f=createVolume('ball');
   for(let i=0;i<160;i++)editVolume(f,{tool:'pull',point:[0,0,1.28+i*.025],normal:[0,0,1],radius:.55,drag:[0,0,.025]});
-  assert.ok(f.extent>VOLUME.extent);assert.ok(sampleVolume(f,0,0,5)<0,'the stretched tip follows the hand');
+  assert.ok(f.size.some(n=>n>VOLUME.size));assert.ok(sampleVolume(f,0,0,5)<0,'the stretched tip follows the hand');
   for(let z=1;z<=5;z+=.1)assert.ok(sampleVolume(f,0,0,z)<0,'the stretched clay remains connected');
   topology(meshVolume(f));
 });
 
 test('expanded workspace survives files, history, loading and reset, with legacy grid support',()=>{
   const f=createVolume('ball');editVolume(f,{tool:'clay',point:[3.5,.5,0],radius:.9});
-  const encoded=encodeVolume(f);assert.equal(encoded.grid,2);assert.ok(encoded.extent>3.6);assert.deepEqual(decodeVolume(encoded),cloneVolume(f));
+  const encoded=encodeVolume(f);assert.equal(encoded.grid,3);assert.ok(encoded.size.some(n=>n>65));assert.deepEqual(decodeVolume(encoded),cloneVolume(f));
   for(const extent of [NaN,Infinity,-1,1000])assert.throws(()=>decodeVolume({...encoded,extent}));
   const old=encodeVolume(createVolume('ball'));old.grid=1;delete old.extent;assert.equal(decodeVolume(old).extent,3.6);
-  const studio=studioFixture(f),history=new History();history.push(studio.snapshot('Expanded'));studio.load(decodeProject(encodeProject(studio.snapshot())));assert.equal(studio.volume.extent,f.extent);
+  const studio=studioFixture(f),history=new History();history.push(studio.snapshot('Expanded'));studio.load(decodeProject(encodeProject(studio.snapshot())));assert.deepEqual(studio.volume.size,f.size);
   const previous=globalThis.window;globalThis.window={matchMedia:()=>({matches:true})};studio.onChange=()=>history.push(studio.snapshot('Reset'));
-  try{assert.ok(studio.resetShape());studio.animateReset(100);assert.equal(studio.volume.extent,3.6);assert.ok(sampleVolume(studio.volume,0,0,0)<0);assert.equal(topology(studio.snapshot().meshes[0]).euler,2);studio.load(history.undo());assert.equal(studio.volume.extent,f.extent);}finally{globalThis.window=previous;}
+  try{assert.ok(studio.resetShape());studio.animateReset(100);assert.deepEqual(studio.volume.size,[65,65,65]);assert.ok(sampleVolume(studio.volume,0,0,0)<0);assert.equal(topology(studio.snapshot().meshes[0]).euler,2);studio.load(history.undo());assert.deepEqual(studio.volume.size,f.size);}finally{globalThis.window=previous;}
 });
 
 test('clay pen, engraving and finishing tools change the surface, while pen styles only color it',()=>{
@@ -219,4 +219,58 @@ test('sparse fast pointer samples create a continuous clay line instead of detac
     for(let x=0;x<5.6;x+=.1)assert.ok(sampleVolume(f,x,0,1.28)<0,`${tool} stays connected at ${x}`);
     topology(meshVolume(f));
   }
+});
+
+test('adding distant clay preserves every existing scalar and pigment sample at the original spacing',()=>{
+  const f=createVolume('head');
+  editVolume(f,{tool:'hole',point:[0,.05,1],radius:.27,direction:[0,0,1]});
+  editVolume(f,{tool:'paint',point:[-.5,.5,.8],radius:.3,color:[0,0,1]});
+  editVolume(f,{tool:'stamp',type:'ball',point:[0,2.2,0],size:.3,blend:.08,color:[.2,.8,.1]});
+  const before=cloneVolume(f),smallBefore=sampleVolume(f,0,2.2,0),h=volumeStep(f);
+  assert.ok(smallBefore<0,'a small clay piece is present before growth');
+  ensureVolumeRoom(f,[6.7,2,0],.9,true);
+  editVolume(f,{tool:'stamp',point:[6.7,2,0],normal:[1,0,0],size:.55,blend:.2,color:[1,0,0],mirror:true});
+  assert.equal(volumeStep(f),h);assert.ok(f.size[0]>before.size[0]);
+  const offset=before.origin.map((v,k)=>Math.round((v-f.origin[k])/h)),[nx,ny]=f.size,[ox,oy,oz]=before.size;
+  for(let z=0;z<oz;z++)for(let y=0;y<oy;y++)for(let x=0;x<ox;x++){
+    const a=x+y*ox+z*ox*oy,b=x+offset[0]+(y+offset[1])*nx+(z+offset[2])*nx*ny;
+    assert.equal(f.values[b],before.values[a],'old clay samples are never resampled');
+    for(let k=0;k<3;k++)assert.equal(f.pigment[b*3+k],before.pigment[a*3+k],'old paint is copied exactly');
+  }
+  assert.ok(Math.abs(sampleVolume(f,0,2.2,0)-smallBefore)<1e-6);assert.ok(sampleVolume(f,0,.05,0)>0,'the small tunnel remains open');topology(meshVolume(f));
+  const studio=studioFixture(f),values=f.values.slice(),pigment=f.pigment.slice();
+  for(const zoom of [.08,4,.35,1])studio.zoomBy(zoom/studio.zoom);
+  assert.deepEqual(studio.volume.values,values);assert.deepEqual(studio.volume.pigment,pigment);assert.ok(sampleVolume(studio.volume,0,2.2,0)<0,'zoom cannot remove the small piece');
+});
+
+test('a full workspace rejects more room atomically and keeps the current creation and undo safe',()=>{
+  const f=createVolume('head'),before=cloneVolume(f);
+  assert.throws(()=>ensureVolumeRoom(f,[40,40,40],2),/workspace/);assert.deepEqual(cloneVolume(f),before);
+  const studio=studioFixture(f),messages=[];studio.tool='grow';studio.strokeBackup=cloneVolume(f);studio.onError=message=>messages.push(message);
+  studio.dab({object:studio.meshes[0],point:new THREE.Vector3(40,40,40),face:{normal:new THREE.Vector3(0,0,1)}},{pointerType:'mouse'});studio.flushVolume();
+  assert.equal(studio.editBlocked,true);assert.equal(studio.changed,false);assert.equal(messages.length,1);assert.deepEqual(cloneVolume(studio.volume),before);topology(studio.snapshot().meshes[0]);
+});
+
+test('older expanded files retain their spacing and shape through growth and a new save',()=>{
+  const f=createVolume('head',[.8,.2,.1],5.4),before=cloneVolume(f),old=encodeVolume(f);old.grid=2;delete old.size;delete old.origin;delete old.step;
+  const restored=restoreVolume(decodeVolume(old));assert.equal(volumeStep(restored),5.4/32);assert.deepEqual(restored.values,before.values);assert.deepEqual(restored.pigment,before.pigment);
+  ensureVolumeRoom(restored,[7,0,0],.6);assert.equal(volumeStep(restored),5.4/32);assert.deepEqual(decodeVolume(encodeVolume(restored)),cloneVolume(restored));
+});
+
+test('two-finger dragging pans, pinch zooms, and lifting one finger never starts an orbit or sculpt',()=>{
+  const studio=studioFixture(),listeners=new Map(),previousWindow=globalThis.window,previousDocument=globalThis.document;
+  globalThis.window={addEventListener(){}};globalThis.document={addEventListener(){}};
+  Object.assign(studio,{theta:0,phi:Math.PI/2,surfaceNormal:new THREE.Vector3(),strokePlane:new THREE.Plane(),previousWorld:new THREE.Vector3()});studio.target.set(0,0,0);studio.updateCamera();
+  studio.container={addEventListener:(type,fn)=>{if(!listeners.has(type))listeners.set(type,[]);listeners.get(type).push(fn);},focus(){},setPointerCapture(){},hasPointerCapture:()=>false};studio.renderer.domElement={addEventListener(){}};studio.showBrush=()=>{};
+  studio.hit=()=>({object:studio.meshes[0],point:new THREE.Vector3(0,0,1.28),face:{normal:new THREE.Vector3(0,0,1)}});
+  const before=cloneVolume(studio.volume),theta=studio.theta,phi=studio.phi,project=()=>new THREE.Vector3().project(studio.camera),start=project();let changes=0;studio.onChange=()=>changes++;
+  try{
+    studio.bindEvents();const emit=(type,id,x,y)=>{for(const fn of listeners.get(type)||[])fn({type,pointerId:id,button:0,clientX:x,clientY:y,pointerType:'touch',pressure:.5});};
+    emit('pointerdown',1,100,120);emit('pointerdown',2,200,120);
+    emit('pointermove',1,140,145);emit('pointermove',2,240,145);studio.handleMove(studio.pending);studio.pending=null;
+    const after=project();assert.ok(Math.abs((after.x-start.x)*400-40)<1e-6);assert.ok(Math.abs(-(after.y-start.y)*300-25)<1e-6);assert.equal(studio.zoom,1);assert.equal(studio.theta,theta);assert.equal(studio.phi,phi);
+    emit('pointermove',1,120,145);emit('pointermove',2,260,145);studio.handleMove(studio.pending);studio.pending=null;assert.equal(studio.zoom,1.4);assert.equal(studio.theta,theta);
+    emit('pointerup',1,120,145);assert.equal(studio.mode,'gesture-end');const target=studio.target.toArray();emit('pointermove',2,300,180);studio.handleMove(studio.pending);studio.pending=null;assert.deepEqual(studio.target.toArray(),target);assert.equal(studio.theta,theta);emit('pointerup',2,300,180);
+    assert.equal(changes,0);assert.deepEqual(cloneVolume(studio.volume),before);
+  }finally{globalThis.window=previousWindow;globalThis.document=previousDocument;}
 });

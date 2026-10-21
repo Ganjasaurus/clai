@@ -3,15 +3,13 @@
 // Edits touch local samples; meshing skips cached empty/interior chunks.
 import {primitiveDistance,primitiveBasis,smoothUnion,PRIMITIVES} from './primitives.js';
 
-export const VOLUME=Object.freeze({cells:64,size:65,step:.1125,extent:3.6,maxExtent:28.8,floor:-1.29,maxVertices:64000,maxTriangles:128000});
-const N=VOLUME.size,NN=N*N,COUNT=N*N*N,H=VOLUME.step,E=VOLUME.extent;
+export const VOLUME=Object.freeze({cells:64,size:65,step:.1125,extent:3.6,maxExtent:28.8,maxSamples:1500000,floor:-1.29,maxVertices:64000,maxTriangles:128000});
+const N=VOLUME.size,NN=N*N,H=VOLUME.step,E=VOLUME.extent;
 const coord=i=>i*H-E,clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const safe=v=>Math.abs(v)<.00001?(v<0?-.00001:.00001):clamp(v,-8,8);
 const finite3=v=>v&&v.length===3&&Array.from(v).every(Number.isFinite);
-const offsets=[0,1,N,N+1,NN,NN+1,NN+N,NN+N+1];
 const corners=[[0,0,0],[1,0,0],[0,1,0],[1,1,0],[0,0,1],[1,0,1],[0,1,1],[1,1,1]];
 const tets=[[0,1,3,7],[0,3,2,7],[0,2,6,7],[0,6,4,7],[0,4,5,7],[0,5,1,7]];
-const edgeKinds=new Map([1,N,N+1,NN,NN+1,NN+N,NN+N+1].map((v,i)=>[v,i]));
 const cases=Array.from({length:256},(_,mask)=>{
   const triangles=[];
   for(const tet of tets){
@@ -31,31 +29,46 @@ const cases=Array.from({length:256},(_,mask)=>{
   return triangles;
 });
 
-export const volumeStep=field=>(field.extent||E)*2/(N-1);
-const gridY=field=>(field.extent||E)-E;
-const position=(i,field,axis=0)=>i*volumeStep(field)-(field.extent||E)+(axis===1?gridY(field):0);
-function boundary(field,x,y,z){const extent=field.extent||E,h=volumeStep(field);return Math.max(VOLUME.floor-y,Math.abs(x)-extent+h,Math.abs(z)-extent+h,y-gridY(field)-extent+h);}
-function runtime(field){
-  field.extent=field.extent||E;
-  field.dirty=new Uint8Array(512).fill(1);field.active=new Uint8Array(512);
-  field.edgeIndex=new Int32Array(COUNT*7);field.meshDirty=true;field.geometryDirty=true;return field;
+// Spacing is immutable during editing. Growth appends aligned sample slabs;
+// existing samples and pigment are copied exactly, never downsampled.
+export const volumeStep=field=>field.step||(field.extent||E)*2/(N-1);
+const dimensions=field=>field.size||[N,N,N];
+const originOf=field=>field.origin||[-(field.extent||E),-E,-(field.extent||E)];
+const position=(i,field,axis=0)=>i*volumeStep(field)+originOf(field)[axis];
+function boundary(field,x,y,z){
+  const h=volumeStep(field),o=originOf(field),s=dimensions(field);
+  return Math.max(VOLUME.floor-y,o[0]+h-x,x-o[0]-(s[0]-2)*h,o[2]+h-z,z-o[2]-(s[2]-2)*h,y-o[1]-(s[1]-2)*h);
 }
-export function cloneVolume(field){return {extent:field.extent||E,values:field.values.slice(),pigment:field.pigment.slice()};}
+function layout(saved={}){
+  const extent=saved.extent??E,size=saved.size||[N,N,N],origin=saved.origin||[-extent,-E,-extent],step=saved.step??extent*2/(N-1);
+  if(!Number.isFinite(extent)||extent<E||extent>VOLUME.maxExtent||!finite3(size)||size.some(v=>!Number.isInteger(v)||v<9||v>513||(v-1)%8)||size.reduce((a,b)=>a*b,1)>VOLUME.maxSamples||!finite3(origin)||origin.some(v=>Math.abs(v)>100)||!Number.isFinite(step)||step<H||step>VOLUME.maxExtent/32)throw new Error('This clay has an invalid workspace.');
+  return {extent,size:[...size],origin:[...origin],step};
+}
+function runtime(field){
+  Object.assign(field,layout(field));const [nx,ny,nz]=field.size,cx=(nx-1)/8,cy=(ny-1)/8,cz=(nz-1)/8,nn=nx*ny;
+  field.chunks=[cx,cy,cz];field.dirty=new Uint8Array(cx*cy*cz).fill(1);field.active=new Uint8Array(cx*cy*cz);
+  field.offsets=[0,1,nx,nx+1,nn,nn+1,nn+nx,nn+nx+1];field.edgeKinds=new Map([1,nx,nx+1,nn,nn+1,nn+nx,nn+nx+1].map((v,i)=>[v,i]));
+  field.edgeIndex=new Int32Array(nx*ny*nz*7);field.meshDirty=true;field.geometryDirty=true;return field;
+}
+export function cloneVolume(field){return {...layout(field),values:field.values.slice(),pigment:field.pigment.slice()};}
 export function restoreVolume(saved){
-  if(!saved||(saved.extent!==undefined&&(!Number.isFinite(saved.extent)||saved.extent<E||saved.extent>VOLUME.maxExtent))||saved.values?.length!==COUNT||saved.pigment?.length!==COUNT*3||!Array.from(saved.values).every(v=>Number.isFinite(v)&&Math.abs(v)<=8)||!Array.from(saved.pigment).every(v=>Number.isInteger(v)&&v>=0&&v<=255))throw new Error('This clay has incomplete solid data.');
-  const field=runtime({extent:saved.extent,values:Float32Array.from(saved.values),pigment:Uint8Array.from(saved.pigment)});enclose(field);return field;
+  if(!saved)throw new Error('This clay has incomplete solid data.');
+  const grid=layout(saved),count=grid.size.reduce((a,b)=>a*b,1);
+  if(saved.values?.length!==count||saved.pigment?.length!==count*3||!saved.values.every(v=>Number.isFinite(v)&&Math.abs(v)<=8)||!saved.pigment.every(v=>Number.isInteger(v)&&v>=0&&v<=255))throw new Error('This clay has incomplete solid data.');
+  const field=runtime({...grid,values:Float32Array.from(saved.values),pigment:Uint8Array.from(saved.pigment)});enclose(field);return field;
 }
 function enclose(field){
-  const f=field.values;
-  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    const i=x+y*N+z*NN;
-    f[i]=safe(Math.max(f[i],boundary(field,position(x,field),position(y,field,1),position(z,field))));
+  const f=field.values,[nx,ny,nz]=field.size,nn=nx*ny;
+  for(let z=0;z<nz;z++)for(let y=0;y<ny;y++)for(let x=0;x<nx;x++){
+    const i=x+y*nx+z*nn;
+    f[i]=safe(Math.max(f[i],boundary(field,position(x,field),position(y,field,1),position(z,field,2))));
   }
 }
-export function createVolume(type='head',color=[.847,.246,.095],extent=E){
-  const field=runtime({extent,values:new Float32Array(COUNT),pigment:new Uint8Array(COUNT*3)}),c=color.map(v=>Math.round(clamp(v,0,1)*255));
-  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    const px=position(x,field),py=position(y,field,1),pz=position(z,field),i=x+y*N+z*NN;
+export function createVolume(type='head',color=[.847,.246,.095],extent=E,like=null){
+  const grid=layout(like||{extent}),[nx,ny,nz]=grid.size,count=nx*ny*nz;
+  const field=runtime({...grid,values:new Float32Array(count),pigment:new Uint8Array(count*3)}),c=color.map(v=>Math.round(clamp(v,0,1)*255));
+  for(let z=0;z<nz;z++)for(let y=0;y<ny;y++)for(let x=0;x<nx;x++){
+    const px=position(x,field),py=position(y,field,1),pz=position(z,field,2),i=x+y*nx+z*nx*ny;
     let d=Math.hypot(px,py,pz)-1.28;
     if(type==='head'){
       const taper=1-.16*clamp(-py,0,1.4),a=1.03*taper;
@@ -76,32 +89,47 @@ export function createVolume(type='head',color=[.847,.246,.095],extent=E){
 }
 
 export function sampleVolume(field,x,y,z){
-  const extent=field.extent||E,h=volumeStep(field),f=field.values,gx=clamp((x+extent)/h,0,N-1.000001),gy=clamp((y-gridY(field)+extent)/h,0,N-1.000001),gz=clamp((z+extent)/h,0,N-1.000001),ix=Math.floor(gx),iy=Math.floor(gy),iz=Math.floor(gz),a=gx-ix,b=gy-iy,c=gz-iz,i=ix+iy*N+iz*NN;
-  return (f[i]*(1-a)+f[i+1]*a)*(1-b)*(1-c)+(f[i+N]*(1-a)+f[i+N+1]*a)*b*(1-c)+(f[i+NN]*(1-a)+f[i+NN+1]*a)*(1-b)*c+(f[i+NN+N]*(1-a)+f[i+NN+N+1]*a)*b*c;
+  const h=volumeStep(field),[nx,ny,nz]=dimensions(field),o=originOf(field),nn=nx*ny,f=field.values,gx=clamp((x-o[0])/h,0,nx-1.000001),gy=clamp((y-o[1])/h,0,ny-1.000001),gz=clamp((z-o[2])/h,0,nz-1.000001),ix=Math.floor(gx),iy=Math.floor(gy),iz=Math.floor(gz),a=gx-ix,b=gy-iy,c=gz-iz,i=ix+iy*nx+iz*nn;
+  return (f[i]*(1-a)+f[i+1]*a)*(1-b)*(1-c)+(f[i+nx]*(1-a)+f[i+nx+1]*a)*b*(1-c)+(f[i+nn]*(1-a)+f[i+nn+1]*a)*(1-b)*c+(f[i+nn+nx]*(1-a)+f[i+nn+nx+1]*a)*b*c;
 }
 
-// Keep the sample budget fixed as a creation grows. Expansion is occasional,
-// and resamples the existing solid rather than clipping it at the old walls.
-// Larger creations trade fine detail for room; files and undo carry the extent.
-export function resizeVolume(field,extent){
-  if(!Number.isFinite(extent)||extent<E||extent>VOLUME.maxExtent)throw new Error('Invalid clay workspace.');
-  if(extent===field.extent)return false;
-  const source=cloneVolume(field),oldExtent=source.extent,oldH=volumeStep(source);
-  field.extent=extent;const h=volumeStep(field),oy=gridY(source);
-  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    const px=position(x,field),py=position(y,field,1),pz=position(z,field),i=x+y*N+z*NN;
-    const qx=clamp(px,-oldExtent,oldExtent),qy=clamp(py-oy,-oldExtent,oldExtent)+oy,qz=clamp(pz,-oldExtent,oldExtent);
-    const outside=Math.hypot(px-qx,py-qy,pz-qz);
-    field.values[i]=safe(Math.max(sampleVolume(source,qx,qy,qz)+outside,boundary(field,px,py,pz)));
-    const a=clamp(Math.round((qx+oldExtent)/oldH),0,N-1),b=clamp(Math.round((qy-oy+oldExtent)/oldH),0,N-1),c=clamp(Math.round((qz+oldExtent)/oldH),0,N-1),j=(a+b*N+c*NN)*3;
-    field.pigment.set(source.pigment.subarray(j,j+3),i*3);
+export function ballResetValues(field){
+  const [nx,ny,nz]=field.size,values=new Float32Array(field.values.length);
+  for(let z=0;z<nz;z++)for(let y=0;y<ny;y++)for(let x=0;x<nx;x++){
+    const px=position(x,field),py=position(y,field,1),pz=position(z,field,2);
+    values[x+y*nx+z*nx*ny]=safe(Math.max(Math.hypot(px,py,pz)-1.28,boundary(field,px,py,pz)));
   }
-  field.dirty.fill(1);field.meshDirty=true;field.geometryDirty=true;return h!==oldH;
+  return values;
 }
-export function ensureVolumeRoom(field,point,reach){
-  let extent=field.extent||E;
-  while(extent<VOLUME.maxExtent&&(Math.abs(point[0])+reach>extent*.88||Math.abs(point[2])+reach>extent*.88||point[1]+reach>2*extent-E-extent*.12))extent=Math.min(VOLUME.maxExtent,extent*1.5);
-  return extent!==(field.extent||E)&&resizeVolume(field,extent);
+
+// Only an explicit Reset returns to the starter grid. Growth never calls this.
+export function resetVolumeGrid(field){
+  const target=createVolume('ball'),h=volumeStep(field),[nx,ny,nz]=field.size,o=field.origin;
+  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const a=clamp(Math.round((coord(x)-o[0])/h),0,nx-1),b=clamp(Math.round((coord(y)-o[1])/h),0,ny-1),c=clamp(Math.round((coord(z)-o[2])/h),0,nz-1),j=(a+b*nx+c*nx*ny)*3;
+    target.pigment.set(field.pigment.subarray(j,j+3),(x+y*N+z*NN)*3);
+  }
+  return target;
+}
+export function ensureVolumeRoom(field,point,reach,mirror=false){
+  const h=volumeStep(field),old=field.size,origin=field.origin,low=[0,0,0],high=[0,0,0];
+  for(let k=0;k<3;k++){
+    const lower=mirror&&k===0?-Math.abs(point[k]):point[k],upper=mirror&&k===0?Math.abs(point[k]):point[k];
+    const min=k===1?Math.max(VOLUME.floor-h,lower-reach):lower-reach,max=upper+reach;
+    low[k]=Math.max(0,Math.ceil((origin[k]+h*3-min)/(h*16))*16);
+    high[k]=Math.max(0,Math.ceil((max-(origin[k]+(old[k]-4)*h))/(h*16))*16);
+  }
+  if(!low.some(Boolean)&&!high.some(Boolean))return false;
+  const size=old.map((n,k)=>n+low[k]+high[k]),count=size.reduce((a,b)=>a*b,1);
+  if(count>VOLUME.maxSamples||size.some(n=>n>513))throw new Error('This creation has filled its workspace. Your details are safe. Undo or start a new clay to make more room.');
+  const values=new Float32Array(count).fill(8),pigment=new Uint8Array(count*3),tint=field.pigment.subarray(0,3),[nx,ny]=size;
+  for(let i=0;i<count;i++)pigment.set(tint,i*3);
+  // Aligned row copies retain every old sample bit-for-bit, including paint.
+  for(let z=0;z<old[2];z++)for(let y=0;y<old[1];y++){
+    const source=(y+z*old[1])*old[0],target=low[0]+(y+low[1])*nx+(z+low[2])*nx*ny;
+    values.set(field.values.subarray(source,source+old[0]),target);pigment.set(field.pigment.subarray(source*3,(source+old[0])*3),target*3);
+  }
+  Object.assign(field,{size,origin:origin.map((v,k)=>v-low[k]*h),values,pigment});runtime(field);return true;
 }
 
 // Sample older, closed radial clay into the new solid. The caller supplies a
@@ -126,17 +154,16 @@ export function volumeFromRadial(mesh){
 
 function mark(field,x,y,z,geometry=true){
   field.meshDirty=true;if(!geometry)return;field.geometryDirty=true;
-  // Neighboring cells share samples, and gradient normals use one extra sample.
-  for(let a=Math.max(0,Math.floor((x-2)/8));a<=Math.min(7,Math.floor((x+1)/8));a++)for(let b=Math.max(0,Math.floor((y-2)/8));b<=Math.min(7,Math.floor((y+1)/8));b++)for(let c=Math.max(0,Math.floor((z-2)/8));c<=Math.min(7,Math.floor((z+1)/8));c++)field.dirty[a+b*8+c*64]=1;
-  field.meshDirty=true;
+  const [cx,cy,cz]=field.chunks;
+  for(let a=Math.max(0,Math.floor((x-2)/8));a<=Math.min(cx-1,Math.floor((x+1)/8));a++)for(let b=Math.max(0,Math.floor((y-2)/8));b<=Math.min(cy-1,Math.floor((y+1)/8));b++)for(let c=Math.max(0,Math.floor((z-2)/8));c<=Math.min(cz-1,Math.floor((z+1)/8));c++)field.dirty[a+b*cx+c*cx*cy]=1;
 }
 
 export function editVolume(field,{tool='push',point,normal=[0,0,1],radius=.42,strength=1,drag=[0,0,0],color=[.847,.246,.095],mirror=false,type='ball',blend=.22,size=.7,direction=normal,paintStyle='pen',opacity=1}={}){
   if(!finite3(point)||!finite3(normal)||!finite3(color)||!finite3(drag)||!finite3(direction)||!Number.isFinite(radius)||!Number.isFinite(strength)||!['push','pull','grow','smooth','paint','carve','hole','stamp','flatten','clay','engrave','polish','fill'].includes(tool))return 0;
   if(tool==='stamp'&&!PRIMITIVES[type])return 0;
   strength=clamp(strength,0,2);if(!strength)return 0;
-  if(['grow','pull','clay','stamp'].includes(tool))ensureVolumeRoom(field,point,tool==='stamp'?size*PRIMITIVES[type].bound+blend:radius*1.6+(tool==='pull'?Math.hypot(...drag)*.5:0));
-  const extent=field.extent||E,h=volumeStep(field),originY=gridY(field),painting=tool==='paint'||tool==='fill';
+  if(['grow','pull','clay','stamp'].includes(tool))ensureVolumeRoom(field,point,tool==='stamp'?size*PRIMITIVES[type].bound+blend:radius*1.6+(tool==='pull'?Math.hypot(...drag)*.5:0),mirror);
+  const h=volumeStep(field),dims=field.size,[nx,ny,nz]=dims,nn=nx*ny,origin=field.origin,painting=tool==='paint'||tool==='fill';
   radius=clamp(radius,Math.max(tool==='hole'?.27:painting?.12:.22,h*(painting?1.1:2.1)),Math.max(1.5,h*5));size=clamp(Number(size)||.7,h*2.5,Math.max(1.8,h*6));blend=clamp(Number(blend)||.22,h*.6,Math.max(.5,h*2));
   opacity=clamp(Number.isFinite(opacity)?opacity:1,.05,1);
   if(tool==='fill'){
@@ -151,10 +178,10 @@ export function editVolume(field,{tool='push',point,normal=[0,0,1],radius=.42,st
     const p=centers[part],normal=normals[part],basis=primitiveBasis(normal),length=Math.hypot(...directions[part])||1,axis=directions[part].map(v=>v/length);
     const sweep=['clay','pull','grow'].includes(tool)?drags[part]:[0,0,0],sweepLength=Math.hypot(...sweep),swept=sweepLength>.00001;
     const center=tool==='stamp'?p.map((v,k)=>v+basis[3+k]*size*.08):swept&&tool!=='pull'?p.map((v,k)=>v-sweep[k]*.5):p;
-    const reach=tool==='hole'?extent*4:tool==='stamp'?size*PRIMITIVES[type].bound+blend:radius+h+sweepLength*.5;
-    const low=center.map((v,k)=>clamp(Math.floor((v-(k===1?originY:0)-reach+extent)/h),1,N-2)),high=center.map((v,k)=>clamp(Math.ceil((v-(k===1?originY:0)+reach+extent)/h),1,N-2));
+    const reach=tool==='hole'?Math.max(...dims)*h*2:tool==='stamp'?size*PRIMITIVES[type].bound+blend:radius+h+sweepLength*.5;
+    const low=center.map((v,k)=>clamp(Math.floor((v-origin[k]-reach)/h),1,dims[k]-2)),high=center.map((v,k)=>clamp(Math.ceil((v-origin[k]+reach)/h),1,dims[k]-2));
     for(let z=low[2];z<=high[2];z++)for(let y=low[1];y<=high[1];y++)for(let x=low[0];x<=high[0];x++){
-      const i=x+y*N+z*NN,px=position(x,field),py=position(y,field,1),pz=position(z,field);
+      const i=x+y*nx+z*nn,px=position(x,field),py=position(y,field,1),pz=position(z,field,2);
       let dx=px-center[0],dy=py-center[1],dz=pz-center[2];
       // A fast stroke sweeps a capsule, so sparse pointer events cannot leave beads.
       if(swept){const along=clamp((dx*sweep[0]+dy*sweep[1]+dz*sweep[2])/(sweepLength*sweepLength),-.5,.5);dx-=sweep[0]*along;dy-=sweep[1]*along;dz-=sweep[2]*along;}
@@ -177,9 +204,9 @@ export function editVolume(field,{tool='push',point,normal=[0,0,1],radius=.42,st
       }else if(tool==='carve'||tool==='engrave'){
         const r=radius*(tool==='engrave'?.43:.8);value=Math.max(before,(r-Math.sqrt(d2))*.8);
       }else if(tool==='clay')value=smoothUnion(before,Math.sqrt(d2)-radius*.7,radius*.25);
-      else if(tool==='smooth'||tool==='polish')value=before+((source[i-1]+source[i+1]+source[i-N]+source[i+N]+source[i-NN]+source[i+NN])/6-before)*w*Math.min(.65,strength*(tool==='polish'?.16:.45));
+      else if(tool==='smooth'||tool==='polish')value=before+((source[i-1]+source[i+1]+source[i-nx]+source[i+nx]+source[i-nn]+source[i+nn])/6-before)*w*Math.min(.65,strength*(tool==='polish'?.16:.45));
       else if(tool==='pull'){
-        const d=drags[part],moving=Math.hypot(...d)>.00001,v=moving?d:normal.map(v=>v*h*.32),f={values:source,extent};
+        const d=drags[part],moving=Math.hypot(...d)>.00001,v=moving?d:normal.map(v=>v*h*.32),f={values:source,size:dims,origin,step:h};
         value=sampleVolume(f,px-v[0]*w*strength,py-v[1]*w*strength,pz-v[2]*w*strength);
         // A rounded bridge follows the grab as well as advecting the field.
         // This prevents repeated interpolation from thinning a long pull away.
@@ -213,28 +240,29 @@ export function meshVolume(field){
     for(let i=0;i<a.length;i++)for(let k=0;k<3;k++)c[i*3+k]=(p[a[i]*3+k]+(p[b[i]*3+k]-p[a[i]*3+k])*t[i])/255;
     field.meshDirty=false;return field.mesh;
   }
+  const [nx,ny,nz]=field.size,nn=nx*ny,[cxCount,cyCount,czCount]=field.chunks,{offsets,edgeKinds}=field;
   const f=field.values,pigment=field.pigment,edges=field.edgeIndex;edges.fill(-1);
   const positions=[],colors=[],indices=[],normals=[],sampleA=[],sampleB=[],sampleT=[];
   const vertex=(base,a,b)=>{
     const ia=base+offsets[a],ib=base+offsets[b],key=ia*7+edgeKinds.get(ib-ia);let index=edges[key];if(index>=0)return index;
-    const t=clamp(f[ia]/(f[ia]-f[ib]),.00001,.99999),az=Math.floor(ia/NN),ay=Math.floor((ia-az*NN)/N),ax=ia%N,bz=Math.floor(ib/NN),by=Math.floor((ib-bz*NN)/N),bx=ib%N;
-    index=positions.length/3;edges[key]=index;positions.push(position(ax+(bx-ax)*t,field),position(ay+(by-ay)*t,field,1),position(az+(bz-az)*t,field));sampleA.push(ia);sampleB.push(ib);sampleT.push(t);
+    const t=clamp(f[ia]/(f[ia]-f[ib]),.00001,.99999),az=Math.floor(ia/nn),ay=Math.floor((ia-az*nn)/nx),ax=ia%nx,bz=Math.floor(ib/nn),by=Math.floor((ib-bz*nn)/nx),bx=ib%nx;
+    index=positions.length/3;edges[key]=index;positions.push(position(ax+(bx-ax)*t,field),position(ay+(by-ay)*t,field,1),position(az+(bz-az)*t,field,2));sampleA.push(ia);sampleB.push(ib);sampleT.push(t);
     for(let k=0;k<3;k++)colors.push((pigment[ia*3+k]+(pigment[ib*3+k]-pigment[ia*3+k])*t)/255);
-    const gx=(f[ia+1]-f[ia-1])*(1-t)+(f[ib+1]-f[ib-1])*t,gy=(f[ia+N]-f[ia-N])*(1-t)+(f[ib+N]-f[ib-N])*t,gz=(f[ia+NN]-f[ia-NN])*(1-t)+(f[ib+NN]-f[ib-NN])*t,length=Math.hypot(gx,gy,gz)||1;
+    const gx=(f[ia+1]-f[ia-1])*(1-t)+(f[ib+1]-f[ib-1])*t,gy=(f[ia+nx]-f[ia-nx])*(1-t)+(f[ib+nx]-f[ib-nx])*t,gz=(f[ia+nn]-f[ia-nn])*(1-t)+(f[ib+nn]-f[ib-nn])*t,length=Math.hypot(gx,gy,gz)||1;
     normals.push(gx/length,gy/length,gz/length);return index;
   };
-  for(let cz=0;cz<8;cz++)for(let cy=0;cy<8;cy++)for(let cx=0;cx<8;cx++){
-    const chunk=cx+cy*8+cz*64;
+  for(let cz=0;cz<czCount;cz++)for(let cy=0;cy<cyCount;cy++)for(let cx=0;cx<cxCount;cx++){
+    const chunk=cx+cy*cxCount+cz*cxCount*cyCount;
     if(field.dirty[chunk]){
       let negative=false,positive=false;
       for(let z=cz*8;z<=cz*8+8&&!(negative&&positive);z++)for(let y=cy*8;y<=cy*8+8&&!(negative&&positive);y++)for(let x=cx*8;x<=cx*8+8;x++){
-        const value=f[x+y*N+z*NN];negative||=value<0;positive||=value>=0;if(negative&&positive)break;
+        const value=f[x+y*nx+z*nn];negative||=value<0;positive||=value>=0;if(negative&&positive)break;
       }
       field.active[chunk]=Number(negative&&positive);field.dirty[chunk]=0;
     }
     if(!field.active[chunk])continue;
     for(let z=cz*8;z<cz*8+8;z++)for(let y=cy*8;y<cy*8+8;y++)for(let x=cx*8;x<cx*8+8;x++){
-      const base=x+y*N+z*NN;let mask=0;for(let k=0;k<8;k++)if(f[base+offsets[k]]<0)mask|=1<<k;
+      const base=x+y*nx+z*nn;let mask=0;for(let k=0;k<8;k++)if(f[base+offsets[k]]<0)mask|=1<<k;
       if(mask===0||mask===255)continue;
       for(const [a,b] of cases[mask])indices.push(vertex(base,a,b));
       if(positions.length/3>VOLUME.maxVertices||indices.length/3>VOLUME.maxTriangles)throw new Error('Let’s keep this clay light. Undo a little detail, then keep creating.');
@@ -249,11 +277,13 @@ export function encodeVolume(field){
   // Exact float bytes preserve tiny sign changes around a hole across saves.
   const bytes=new Uint8Array(field.values.buffer,field.values.byteOffset,field.values.byteLength);
   const base64=data=>{let s='';for(let i=0;i<data.length;i+=8192)s+=String.fromCharCode(...data.subarray(i,i+8192));return btoa(s);};
-  return {grid:2,extent:field.extent||E,values:base64(bytes),pigment:base64(field.pigment)};
+  return {grid:3,...layout(field),values:base64(bytes),pigment:base64(field.pigment)};
 }
 export function decodeVolume(data){
-  if(![1,2].includes(data?.grid)||typeof data.values!=='string'||typeof data.pigment!=='string'||data.values.length!==Math.ceil(COUNT*4/3)*4||data.pigment.length!==Math.ceil(COUNT*3/3)*4)throw new Error('This clay has incomplete solid data.');
+  if(![1,2,3].includes(data?.grid))throw new Error('This clay has incomplete solid data.');
+  const grid=layout(data.grid===3?data:{extent:data.grid===2?data.extent:E}),count=grid.size.reduce((a,b)=>a*b,1);
+  if(typeof data.values!=='string'||typeof data.pigment!=='string'||data.values.length!==Math.ceil(count*4/3)*4||data.pigment.length!==Math.ceil(count*3/3)*4)throw new Error('This clay has incomplete solid data.');
   const bytes=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));let values,pigment;
   try{values=new Float32Array(bytes(data.values).buffer);pigment=bytes(data.pigment);}catch{throw new Error('This clay file could not be read.');}
-  return cloneVolume(restoreVolume({extent:data.grid===2?data.extent:E,values,pigment}));
+  return cloneVolume(restoreVolume({...grid,values,pigment}));
 }
