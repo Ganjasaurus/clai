@@ -6,7 +6,7 @@ import {createPreset,Studio} from '../dist/studio.js';
 import {attachClaySafety,SpatialHash,CLAY_LIMITS,BALL_RADIUS,History,encodeProject,decodeProject,protectedClay} from '../dist/sculpt.js';
 import {PRIMITIVES,primitiveDistance,primitiveBasis,smoothUnion,blendPrimitive} from '../dist/primitives.js';
 
-function clay(snapshot=createPreset()){
+function clay(snapshot=createPreset('ball')){
   const m=protectedClay(snapshot).meshes[0];m.hash=new SpatialHash(m.positions);attachClaySafety(m);return m;
 }
 function assertSafe(m){

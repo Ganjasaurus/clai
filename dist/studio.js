@@ -1,9 +1,14 @@
 import * as THREE from './vendor/three.module.js';
 import {ellipsoid,adjacency,SpatialHash,applyBrush,ballSurface,attachClaySafety,syncClaySurface,protectedClay} from './sculpt.js';
 import {PRIMITIVES,primitiveBasis,blendPrimitive} from './primitives.js';
+import {createVolume,restoreVolume,cloneVolume,volumeFromRadial,meshVolume,editVolume} from './volume.js';
 
 const CLAY='#ed8857',CREAM='#f8dbad',INK='#343b32';
-export function createPreset(type='ball',color=CLAY){
+export function createPreset(type='head',color=CLAY){
+  if(type==='head'){
+    const volume=createVolume('head',new THREE.Color(color).toArray());
+    return {name:'A little somebody',surface:'solid-clay-v1',volume:cloneVolume(volume),meshes:[meshVolume(volume)]};
+  }
   const parts=[];
   const add=(name,center,scale,tint=color,rotation=0,detail=1)=>{
     const g=ellipsoid({center,scale,rotation,segments:detail===2?80:detail===1?48:24,rings:detail===2?56:detail===1?34:18});
@@ -56,8 +61,9 @@ export function createPreset(type='ball',color=CLAY){
 }
 
 export class Studio {
-  constructor(container,{onChange=()=>{},onZoom=()=>{},onFirstSculpt=()=>{},onError=()=>{},onResetState=()=>{}}={}){
-    this.container=container;this.onChange=onChange;this.onZoom=onZoom;this.onFirstSculpt=onFirstSculpt;this.onError=onError;this.onResetState=onResetState;
+  constructor(container,{onChange=()=>{},onZoom=()=>{},onFirstSculpt=()=>{},onError=()=>{},onResetState=()=>{},onSound=()=>{}}={}){
+    this.container=container;this.onChange=onChange;this.onZoom=onZoom;this.onFirstSculpt=onFirstSculpt;this.onError=onError;this.onResetState=onResetState;this.onSound=onSound;
+    this.volume=null;this.strokeBackup=null;
     this.tool='push';this.radius=.42;this.color=new THREE.Color(CLAY);this.mirror=false;
     this.primitiveType='ball';this.primitiveBlend=.22;this.previewPointer=null;this.primitivePreview=null;this.primitiveGeometries={};
     this.theta=.24;this.phi=1.36;this.distance=8.6;this.zoom=1;this.baseDistance=8.6;
@@ -111,12 +117,43 @@ export class Studio {
     attachClaySafety(mesh.userData);geometry.computeVertexNormals();geometry.computeBoundingSphere();geometry.computeBoundingBox();return mesh;
   }
   load(snapshot){
-    this.finishGesture();this.cancelReset();snapshot=protectedClay(snapshot);
+    this.finishGesture();this.cancelReset();
+    let volume;
+    if(snapshot.surface==='solid-clay-v1'&&snapshot.volume)volume=restoreVolume(snapshot.volume);
+    else{
+      const data=protectedClay(snapshot).meshes[0];attachClaySafety(data);volume=volumeFromRadial(data);
+    }
+    // Validate and finish meshing before replacing the current creation.
+    meshVolume(volume);this.volume=volume;
     for(const m of this.meshes){this.group.remove(m);m.geometry.dispose();}
-    this.meshes=snapshot.meshes.map(m=>this.meshFromData(m));for(const m of this.meshes)this.group.add(m);
+    const mesh=new THREE.Mesh(new THREE.BufferGeometry(),this.material);mesh.name='Clay';mesh.castShadow=true;mesh.receiveShadow=true;
+    this.meshes=[mesh];this.group.add(mesh);this.flushVolume(true);this.strokeBackup=null;
     this.group.updateMatrixWorld(true);this.brushRing.visible=false;if(this.primitivePreview)this.primitivePreview.visible=false;this.renderer.shadowMap.needsUpdate=true;this.requestRender();
   }
-  snapshot(name='My little creation'){return {name,surface:'protected-ball-v1',meshes:this.meshes.map(m=>({name:m.name,positions:m.userData.positions.slice(),colors:m.userData.colors.slice(),indices:m.userData.indices}))};}
+  snapshot(name='My little creation'){
+    if(this.volume)this.flushVolume();
+    return {name,surface:this.volume?'solid-clay-v1':'protected-ball-v1',...(this.volume?{volume:cloneVolume(this.volume)}:{}),meshes:this.meshes.map(m=>({name:m.name,positions:m.userData.positions.slice(),colors:m.userData.colors.slice(),indices:m.userData.indices.slice()}))};
+  }
+  flushVolume(force=false){
+    if(!this.volume||(!this.volume.meshDirty&&!force))return;
+    const geometryChanged=this.volume.geometryDirty||force;
+    let data;
+    try{data=meshVolume(this.volume);}catch(error){
+      if(this.strokeBackup){this.volume=restoreVolume(this.strokeBackup);this.strokeBackup=null;this.changed=false;this.editBlocked=true;this.cancelReset();data=meshVolume(this.volume);this.onError(error.message);}
+      else throw error;
+    }
+    const mesh=this.meshes[0],geometry=mesh.geometry;
+    if(!geometryChanged){geometry.attributes.color.array.set(data.colors);geometry.attributes.color.needsUpdate=true;return;}
+    if(geometry.getAttribute('position')?.array.length!==data.positions.length||geometry.getIndex()?.array.length!==data.indices.length)geometry.dispose();
+    for(const [name,array] of [['position',data.positions],['color',data.colors],['normal',data.normals]]){
+      const attr=geometry.getAttribute(name);
+      if(attr&&attr.array.length===array.length){attr.array.set(array);attr.needsUpdate=true;}
+      else geometry.setAttribute(name,new THREE.BufferAttribute(array,3).setUsage(THREE.DynamicDrawUsage));
+    }
+    const index=geometry.getIndex();if(index&&index.array.length===data.indices.length){index.array.set(data.indices);index.needsUpdate=true;}else geometry.setIndex(new THREE.BufferAttribute(data.indices,1));
+    mesh.userData={positions:geometry.attributes.position.array,colors:geometry.attributes.color.array,indices:geometry.index.array};
+    geometry.computeBoundingSphere();geometry.computeBoundingBox();this.renderer.shadowMap.needsUpdate=true;
+  }
   setTool(tool){this.tool=tool;this.container.dataset.tool=tool;this.brushRing.visible=false;this.previewPointer=null;if(this.primitivePreview)this.primitivePreview.visible=false;this.requestRender();}
   setColor(hex){this.color.set(hex);this.primitivePreview?.material.color.copy(this.color);}
   setPrimitive(type,blend=.22){
@@ -147,7 +184,12 @@ export class Studio {
     this.primitivePreview.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...basis.slice(0,3)),new THREE.Vector3(...basis.slice(3,6)),new THREE.Vector3(...basis.slice(6,9))));
   }
   stamp(hit){
-    if(!hit)return false;
+    if(!hit||this.editBlocked)return false;
+    if(this.volume){
+      const changed=editVolume(this.volume,{tool:'stamp',type:this.primitiveType,point:hit.point.toArray(),normal:hit.face.normal.toArray(),size:this.primitiveSize(),blend:this.primitiveBlend,color:this.color.toArray(),mirror:this.mirror});
+      if(changed){this.changed=true;this.flushVolume();this.onFirstSculpt();this.onSound?.('stamp');this.fitAfterAddition(hit.object);}
+      return changed>0;
+    }
     const changed=blendPrimitive(hit.object.userData,{type:this.primitiveType,point:hit.point.toArray(),normal:hit.face.normal.toArray(),size:this.primitiveSize(),blend:this.primitiveBlend,color:this.color.toArray(),mirror:this.mirror});
     if(changed){hit.object.userData.dirty=true;hit.object.geometry.attributes.color.needsUpdate=true;this.renderer.shadowMap.needsUpdate=true;this.changed=true;this.onFirstSculpt();this.fitAfterAddition(hit.object);}
     return changed>0;
@@ -159,10 +201,17 @@ export class Studio {
     if(factor>1.07&&this.zoom>.55)this.zoomBy(1/(factor*1.03));
   }
   zoomBy(factor){this.zoom=THREE.MathUtils.clamp(this.zoom*factor,.55,2.2);this.updateCamera();this.onZoom(Math.round(this.zoom*100));this.requestRender();}
-  resetView(){this.theta=.24;this.phi=1.36;this.zoom=1;this.updateCamera();this.onZoom(100);this.requestRender();}
+  resetView(){this.theta=.24;this.phi=1.36;this.zoom=1;this.target.set(0,.15,0);this.updateCamera();this.onZoom(100);this.requestRender();}
   toggleSpin(){this.spin=!this.spin;this.lastTime=0;this.brushRing.visible=false;this.requestRender();return this.spin;}
   resetShape(){
     if(this.resetAnimation)return false;this.finishGesture();
+    if(this.volume){
+      const target=createVolume('ball');
+      if(this.volume.values.every((v,i)=>Math.abs(v-target.values[i])<.0001))return false;
+      const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      this.strokeBackup=cloneVolume(this.volume);this.resetAnimation={start:null,duration:reduced?0:800,source:this.volume.values.slice(),target:target.values,last:0};
+      this.onResetState(true);this.onSound?.('reset');this.requestRender();return true;
+    }
     if(!this.meshes.some(m=>m.userData.safety.logRadius.some(v=>Math.abs(v)>.00001)))return false;
     const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     this.resetAnimation={start:null,duration:reduced?0:800,source:this.meshes.map(m=>m.userData.safety.logRadius.slice())};
@@ -174,6 +223,13 @@ export class Studio {
     if(animation.start===null)animation.start=time;
     const progress=animation.duration?Math.min(1,(time-animation.start)/animation.duration):1;
     const eased=progress*progress*progress*(progress*(progress*6-15)+10);
+    if(this.volume){
+      if(time-animation.last<32&&progress<1)return;animation.last=time;
+      for(let i=0;i<this.volume.values.length;i++){const v=animation.source[i]*(1-eased)+animation.target[i]*eased;this.volume.values[i]=Math.abs(v)<.00001?(v<0?-.00001:.00001):v;}
+      this.volume.dirty.fill(1);this.volume.meshDirty=true;this.volume.geometryDirty=true;
+      if(progress===1){this.resetAnimation=null;this.onResetState(false);this.changed=true;this.finishGesture();}
+      return;
+    }
     for(let j=0;j<this.meshes.length;j++){
       const m=this.meshes[j],logs=m.userData.safety.logRadius;
       for(let i=0;i<logs.length;i++)logs[i]=animation.source[j][i]*(1-eased);
@@ -191,26 +247,34 @@ export class Studio {
     this.animateReset(time);
     if(this.pending){const e=this.pending;this.pending=null;this.handleMove(e);}
     if(this.tool==='stamp'&&this.previewPointer&&!this.resetAnimation&&this.mode!=='gesture'&&this.mode!=='orbit')this.showPrimitive(this.spin?this.hit(this.previewPointer.x,this.previewPointer.y):this.previewHit);
-    if(this.touchStart&&(this.spin||this.tool==='grow')&&time-this.touchStart.time>100)this.touchStart=null;
-    const continuous=(this.spin||this.tool==='grow')&&this.mode==='sculpt'&&this.pointers.size===1&&!this.touchStart&&!this.resetAnimation;
+    if(this.tool==='hole'&&this.previewPointer&&this.spin&&this.mode==='hole')this.showBrush(this.hit(this.previewPointer.x,this.previewPointer.y));
+    const heldTool=this.tool==='grow'||this.tool==='carve';
+    if(this.touchStart&&(this.spin||heldTool)&&time-this.touchStart.time>100)this.touchStart=null;
+    const continuous=(this.spin||heldTool)&&this.mode==='sculpt'&&this.pointers.size===1&&!this.touchStart&&!this.resetAnimation;
     if(continuous){
       const e=this.activeBrushEvent,hit=e&&this.hit(e.clientX,e.clientY);
       if(hit){this.dab(hit,e,[0,0,0],dt/(1000/60));if(e.pointerType!=='touch')this.showBrush(hit);}else this.brushRing.visible=false;
     }
+    this.flushVolume();
     this.lastTime=time;
     for(const m of this.meshes)if(m.userData.dirty){m.geometry.attributes.position.needsUpdate=true;m.geometry.computeVertexNormals();m.geometry.computeBoundingSphere();m.geometry.computeBoundingBox();m.userData.dirty=false;}
-    const waitingForTouch=this.tool==='grow'&&this.mode==='sculpt'&&this.touchStart;
+    const waitingForTouch=heldTool&&this.mode==='sculpt'&&this.touchStart;
     this.renderer.render(this.scene,this.camera);if(this.spin||this.resetAnimation||continuous||waitingForTouch)this.requestRender();
   }
   showBrush(hit){
     if(this.tool==='stamp'){this.brushRing.visible=false;this.showPrimitive(hit);return;}
-    if(!hit||this.tool==='orbit'){this.brushRing.visible=false;return;}
-    const normal=hit.face.normal.clone().normalize();this.brushRing.position.copy(hit.point).addScaledVector(normal,.012);this.brushRing.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),normal);this.brushRing.scale.setScalar(this.radius);this.brushRing.visible=true;
+    if(!hit||this.tool==='orbit'||this.tool==='move'){this.brushRing.visible=false;return;}
+    const normal=this.tool==='hole'?this.camera.getWorldDirection(new THREE.Vector3()).negate():hit.face.normal.clone().normalize();this.brushRing.position.copy(hit.point).addScaledVector(normal,.012);this.brushRing.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),normal);this.brushRing.scale.setScalar(Math.max(this.tool==='hole'?.27:this.tool==='paint'?.12:.22,this.radius));this.brushRing.material.color.set(this.tool==='hole'||this.tool==='carve'?'#688fb6':'#fffdf0');this.brushRing.visible=true;
   }
   dab(hit,event,drag=[0,0,0],rate=1){
-    if(!hit)return;
+    if(!hit||this.editBlocked)return;
     const point=hit.point.toArray(),normal=hit.face.normal.toArray();
     const strength=(event.pointerType==='pen'?THREE.MathUtils.clamp(event.pressure*1.7,.25,1.6):.9)*rate;
+    if(this.volume){
+      const affected=editVolume(this.volume,{point,normal,tool:this.tool,radius:this.radius,strength,color:this.color.toArray(),drag,mirror:this.mirror,direction:this.camera.getWorldDirection(new THREE.Vector3()).toArray()});
+      if(affected){this.changed=true;this.onFirstSculpt();this.onSound?.(this.tool);}
+      return;
+    }
     let affected=0;
     const targets=this.mirror?this.meshes:[hit.object];
     for(const mesh of targets){
@@ -228,14 +292,16 @@ export class Studio {
       this.pending=null;this.brushRing.visible=false;
       if(this.pointers.size>=2){this.mode='gesture';this.touchStart=null;this.setGestureBaseline();return;}
       const hit=this.hit(e.clientX,e.clientY);
-      this.mode=(this.tool==='orbit'||!hit||e.button===2||e.altKey||this.spaceHeld)?'orbit':this.tool==='stamp'?'stamp':'sculpt';
-      this.lastPointer={x:e.clientX,y:e.clientY};this.changed=false;this.activeBrushEvent={clientX:e.clientX,clientY:e.clientY,pointerType:e.pointerType,pressure:e.pressure};
+      this.mode=(e.button===2||e.altKey||this.spaceHeld)?'orbit':this.tool==='move'?'move':(this.tool==='orbit'||!hit)?'orbit':this.tool==='stamp'?'stamp':this.tool==='hole'?'hole':'sculpt';
+      this.lastPointer={x:e.clientX,y:e.clientY};this.changed=false;this.editBlocked=false;this.activeBrushEvent={clientX:e.clientX,clientY:e.clientY,pointerType:e.pointerType,pressure:e.pressure};
+      if(this.volume&&['sculpt','stamp','hole'].includes(this.mode))this.strokeBackup=cloneVolume(this.volume);
       if(this.mode==='sculpt'){
         this.surfaceNormal.copy(this.camera.getWorldDirection(new THREE.Vector3()));this.strokePlane.setFromNormalAndCoplanarPoint(this.surfaceNormal,hit.point);this.previousWorld.copy(hit.point);
         if(e.pointerType==='touch')this.touchStart={hit,event:e,x:e.clientX,y:e.clientY,time:performance.now()};
         else{this.dab(hit,e);this.showBrush(hit);}
       }
       if(this.mode==='stamp'){this.previewPointer={x:e.clientX,y:e.clientY};this.showPrimitive(hit);}
+      if(this.mode==='hole'){this.previewPointer={x:e.clientX,y:e.clientY};this.showBrush(hit);}
       this.requestRender();
     });
     el.addEventListener('pointermove',e=>{
@@ -249,6 +315,7 @@ export class Studio {
       if(this.mode==='stamp'&&this.pointers.size===1&&e.type==='pointerup'){
         const point=this.previewPointer;this.stamp(point&&this.hit(point.x,point.y));
       }
+      if(this.mode==='hole'&&this.pointers.size===1&&e.type==='pointerup'){const point=this.previewPointer;this.dab(point&&this.hit(point.x,point.y),e);}
       if(this.touchStart&&this.pointers.size===1&&e.type==='pointerup')this.dab(this.touchStart.hit,this.touchStart.event);
       this.touchStart=null;this.pointers.delete(e.pointerId);if(el.hasPointerCapture(e.pointerId))el.releasePointerCapture(e.pointerId);
       this.brushRing.visible=false;
@@ -280,10 +347,15 @@ export class Studio {
     }
     const dx=e.clientX-this.lastPointer.x,dy=e.clientY-this.lastPointer.y;
     if(this.mode==='orbit'){this.theta-=dx*.007;this.phi=THREE.MathUtils.clamp(this.phi-dy*.006,.28,2.65);this.updateCamera();}
+    else if(this.mode==='move'){
+      const scale=2*(this.baseDistance/this.zoom)*Math.tan(19*Math.PI/180)/this.height,right=new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld,0),up=new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld,1);
+      this.target.addScaledVector(right,-dx*scale).addScaledVector(up,dy*scale);this.target.clamp(new THREE.Vector3(-2,-1.8,-2),new THREE.Vector3(2,2.3,2));this.updateCamera();this.onFirstSculpt();
+    }
     else if(this.mode==='stamp'){this.previewPointer={x:e.clientX,y:e.clientY};this.showPrimitive(this.hit(e.clientX,e.clientY));}
+    else if(this.mode==='hole'){this.previewPointer={x:e.clientX,y:e.clientY};this.showBrush(this.hit(e.clientX,e.clientY));}
     else if(this.mode==='sculpt'){
       this.activeBrushEvent=e;
-      if(this.spin||this.tool==='grow'){this.lastPointer={x:e.clientX,y:e.clientY};return;}
+      if(this.spin||this.tool==='grow'||this.tool==='carve'){this.lastPointer={x:e.clientX,y:e.clientY};return;}
       const steps=Math.max(1,Math.min(6,Math.ceil(Math.hypot(dx,dy)/8)));
       for(let s=1;s<=steps;s++){
         const hit=this.hit(this.lastPointer.x+dx*s/steps,this.lastPointer.y+dy*s/steps);
@@ -297,11 +369,13 @@ export class Studio {
     this.lastPointer={x:e.clientX,y:e.clientY};
   }
   finishGesture(){
+    this.flushVolume();
     this.pending=null;this.mode=null;this.gesture=null;this.touchStart=null;this.activeBrushEvent=null;
     const ids=[...this.pointers.keys()];this.pointers.clear();for(const id of ids)if(this.container.hasPointerCapture(id))this.container.releasePointerCapture(id);
-    this.brushRing.visible=false;this.previewPointer=null;if(this.primitivePreview)this.primitivePreview.visible=false;if(this.changed){this.changed=false;this.onChange();}
+    this.brushRing.visible=false;this.previewPointer=null;if(this.primitivePreview)this.primitivePreview.visible=false;if(this.changed){this.changed=false;this.onChange();}this.strokeBackup=null;this.editBlocked=false;
   }
   capture(maxWidth=1600){
+    this.flushVolume();
     const visible=this.brushRing.visible,previewVisible=this.primitivePreview?.visible;this.brushRing.visible=false;if(this.primitivePreview)this.primitivePreview.visible=false;
     this.renderer.render(this.scene,this.camera);
     const canvas=document.createElement('canvas'),ratio=Math.min(1,maxWidth/this.renderer.domElement.width);

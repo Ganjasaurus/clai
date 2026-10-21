@@ -20,8 +20,8 @@ test('device saves, shelf records and deletion round trip typed mesh data',async
   await storage.deleteCreation('current');
 });
 
-test('UI flows connect the ball, Grow, reset, wheel, undo, saving and the shelf',async()=>{
-  const earlier=createPreset('bunny');await storage.writeCreation({id:'current',snapshot:earlier,updated:1});
+test('UI preserves existing clay and connects head starters, extra tools, sound, undo and the shelf',async()=>{
+  const earlier=createPreset('ball');await storage.writeCreation({id:'current',snapshot:earlier,updated:1});
   const {window,document}=parseHTML(await fs.readFile(new URL('../dist/index.html',import.meta.url),'utf8'));
   const modal=document.getElementById('modal');Object.defineProperty(modal,'open',{get(){return this.hasAttribute('open');}});modal.showModal=function(){this.setAttribute('open','');};modal.close=function(){this.removeAttribute('open');};
   class MockStudio {
@@ -34,9 +34,13 @@ test('UI flows connect the ball, Grow, reset, wheel, undo, saving and the shelf'
     setPrimitive(type,blend){this.primitiveType=type;this.primitiveBlend=blend;this.tool='stamp';}
     capture(){return 'data:image/png;base64,iVBORw0KGgo=';}
   }
+  class MockAudio{
+    constructor(options){this.options=options;this.music=false;this.effects=false;MockAudio.instance=this;}
+    async set(kind,on){this[kind]=on;this.options.onChange();return true;} sound(){} resume(){}
+  }
   const source=(await fs.readFile(new URL('../dist/app.js',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'');
   const timers=new Set();
-  const context=vm.createContext({window,document,Studio:MockStudio,createPreset,PRIMITIVES,...sculpt,...storage,console,Blob,URL,structuredClone,crypto:globalThis.crypto,
+  const context=vm.createContext({window,document,Studio:MockStudio,ClayAudio:MockAudio,createPreset,PRIMITIVES,...sculpt,...storage,console,Blob,URL,structuredClone,crypto:globalThis.crypto,
     setTimeout(fn,ms){const timer=setTimeout(()=>{timers.delete(timer);fn();},ms>=3000?1:Math.min(ms,20));timers.add(timer);return timer;},clearTimeout(timer){clearTimeout(timer);timers.delete(timer);}});
   vm.runInContext(source,context);
   const settle=async()=>{await new Promise(r=>setTimeout(r,40));};await settle();
@@ -46,22 +50,30 @@ test('UI flows connect the ball, Grow, reset, wheel, undo, saving and the shelf'
   click('.swatch[data-color="#688fb6"]');assert.equal(MockStudio.instance.tool,'paint');assert.equal(MockStudio.instance.color,'#688fb6');
   click('#mirror');assert.equal(MockStudio.instance.mirror,true);
   assert.equal(MockStudio.instance.state.meshes.length,1);assert.equal(MockStudio.instance.state.surface,'protected-ball-v1');
-  assert.deepEqual((await storage.readCreation('earlier-clay-1')).snapshot,earlier,'the earlier autosave is preserved before starting with a ball');
+  assert.deepEqual((await storage.readCreation('before-solid-1')).snapshot,earlier,'the exact older autosave is archived before upgrading');
   click('[data-tool="grow"]');assert.equal(MockStudio.instance.tool,'grow');assert.match(document.getElementById('tool-subtitle').textContent,/build rounded volume/);
   click('#spin');assert.equal(MockStudio.instance.spin,true);
-  click('#reset-shape');assert.equal(MockStudio.instance.resetCalled,true);assert.equal(MockStudio.instance.tool,'grow');assert.equal(MockStudio.instance.spin,true);
+  click('#more-tools');assert.equal(modal.open,true);click('[data-extra="hole"]');assert.equal(MockStudio.instance.tool,'hole');assert.equal(document.getElementById('brush-size-label').textContent,'Hole size');
+  click('#more-tools');click('[data-extra="carve"]');assert.equal(MockStudio.instance.tool,'carve');
+  click('#more-tools');click('[data-extra="flatten"]');assert.equal(MockStudio.instance.tool,'flatten');
+  click('#move-object');assert.equal(MockStudio.instance.tool,'move');assert.equal(document.getElementById('brush-size').disabled,true);
+  click('[data-tool="grow"]');assert.equal(document.getElementById('brush-size').disabled,false);
+  click('#more-tools');click('#reset-shape');assert.equal(MockStudio.instance.resetCalled,true);assert.equal(MockStudio.instance.tool,'grow');assert.equal(MockStudio.instance.spin,true);
+  click('#sound');assert.equal(MockAudio.instance.music,false);click('#music-toggle');await settle();assert.equal(MockAudio.instance.music,true);assert.equal(document.getElementById('sound').getAttribute('aria-pressed'),'true');click('#effects-toggle');await settle();assert.equal(MockAudio.instance.effects,true);click('#close-modal');
   click('#add-shape');assert.equal(modal.open,true);assert.equal(document.querySelectorAll('[data-primitive]').length,4);
   const blend=document.getElementById('primitive-blend');blend.value='40';blend.dispatchEvent(new window.Event('input'));
   click('[data-primitive="capsule"]');assert.equal(modal.open,false);assert.equal(MockStudio.instance.tool,'stamp');assert.equal(MockStudio.instance.primitiveType,'capsule');assert.equal(MockStudio.instance.primitiveBlend,.4);assert.equal(document.getElementById('brush-size-label').textContent,'Shape size');
   click('.swatch[data-color="#89a275"]');assert.equal(MockStudio.instance.tool,'stamp');assert.equal(MockStudio.instance.color,'#89a275');
   const title=document.getElementById('project-name');title.value='My blue clay';title.dispatchEvent(new window.Event('change'));
-  click('#new-clay');assert.equal(modal.open,false);assert.equal(title.value,'A ball of possibility');
+  click('#new-clay');assert.equal(modal.open,true);assert.equal(document.querySelectorAll('[data-starter]').length,2);click('[data-starter="head"]');assert.equal(title.value,'A little somebody');assert.equal(MockStudio.instance.state.surface,'solid-clay-v1');
+  click('#undo');assert.equal(title.value,'My blue clay');
+  click('#new-clay');click('[data-starter="ball"]');assert.equal(modal.open,false);assert.equal(title.value,'A ball of possibility');
   click('#undo');assert.equal(title.value,'My blue clay');
   click('#redo');assert.equal(title.value,'A ball of possibility');
   click('#keep');assert.ok(document.getElementById('export-project'));click('#save-shelf');await settle();assert.equal(modal.open,false);
   click('#open-shelf');await settle();assert.equal(document.querySelectorAll('[data-open]').length,2);assert.match(document.querySelector('.shelf-info').textContent,/A ball of possibility/);
   click('[data-open="0"]');assert.equal(modal.open,false);
-  click('#help');assert.match(document.getElementById('modal-content').textContent,/two fingers/);assert.match(document.getElementById('modal-content').textContent,/Reset softly/);click('#close-modal');
+  click('#help');assert.match(document.getElementById('modal-content').textContent,/two fingers/);assert.match(document.getElementById('modal-content').textContent,/Reset in More softly/);assert.match(document.getElementById('modal-content').textContent,/cut a tunnel through both sides/);click('#close-modal');
   await settle();const saved=await storage.readCreation('current');assert.equal(saved.snapshot.name,'A ball of possibility');
   for(const timer of timers)clearTimeout(timer);
 });

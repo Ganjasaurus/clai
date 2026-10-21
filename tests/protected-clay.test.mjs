@@ -4,7 +4,7 @@ import * as THREE from '../dist/vendor/three.module.js';
 import {ballSurface,attachClaySafety,SpatialHash,applyBrush,CLAY_LIMITS,BALL_RADIUS,protectedClay,encodeProject,decodeProject,History} from '../dist/sculpt.js';
 import {Studio,createPreset} from '../dist/studio.js';
 
-function clay(snapshot=createPreset()){
+function clay(snapshot=createPreset('ball')){
   const m=protectedClay(snapshot).meshes[0];m.hash=new SpatialHash(m.positions);return attachClaySafety(m);
 }
 function brush(m,tool,i,radius=.42,strength=1.6,mirror=false,drag=[0,0,0]){
@@ -31,8 +31,8 @@ function checkTriangles(m){
 }
 function frontVertex(m){let best=0;for(let i=1;i<m.positions.length/3;i++)if(m.positions[i*3+2]>m.positions[best*3+2])best=i;return best;}
 
-test('the default is one closed, evenly triangulated ball',()=>{
-  const preset=createPreset();assert.equal(preset.meshes.length,1);assert.equal(preset.surface,'protected-ball-v1');
+test('legacy ball data remains closed and evenly triangulated',()=>{
+  const preset=createPreset('ball');assert.equal(preset.meshes.length,1);assert.equal(preset.surface,'protected-ball-v1');
   const m=clay(),edges=new Map();
   for(let i=0;i<m.indices.length;i+=3)for(let k=0;k<3;k++){const a=m.indices[i+k],b=m.indices[i+(k+1)%3],key=a<b?`${a},${b}`:`${b},${a}`;edges.set(key,(edges.get(key)||0)+1);}
   assert.ok([...edges.values()].every(n=>n===2));assert.equal(m.positions.length/3-edges.size+m.indices.length/3,2);checkLimits(m);checkTriangles(m);

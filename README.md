@@ -1,53 +1,59 @@
 # clai
 
-A small, browser-local 3D clay playground. Static HTML, CSS and ES modules; no application framework or server required. Runtime assets, including Three.js and DM Sans, are served locally.
+A small, browser-local clay playground. Static HTML, CSS and ES modules; no framework or application server. Three.js, fonts, icons and synthesized audio are served or created locally.
 
 ## Play
 
-Serve `dist/` with any static HTTP server, for example `python -m http.server 8000 --directory dist`, then open `http://localhost:8000`.
+- Fresh sessions start with a friendly head: ears, nose, painted eyes and a smile, all in one editable solid. New clay offers a head or a plain ball. Existing saves resume instead of being replaced.
+- Squish, Stretch, Grow, Smooth and Paint stay on the main rail. Hold Grow to build up clay. Shapes adds blended balls, eggs, pills or rounded cubes with a placement preview, adjustable size and soft joins.
+- More contains Hole, Carve, Flatten and Reset. Hole cuts a tunnel along the current viewing ray; drag the preview, then release to place. Carve scoops continuously while held. Squish can also go inward through the center. Flatten gently levels a local surface.
+- The four-arrow Move control pans the whole creation in the view without sculpting it. Tap the percentage to recenter. Background dragging or right-drag rotates; two fingers rotate and pinch to zoom. The pottery wheel continues while tools are used.
+- Mirror magic applies strokes and additions to both sides. Overlapping brush regions use the stronger influence once. Stylus pressure adjusts strength.
+- Reset animates back into a ball and retains pigment. Reduced motion makes it immediate. Undo restores the previous shape, including tunnels. New clay is undoable too.
+- The music-note button opens independent music and clay-sound switches. Both start off. Music is an original, quiet synthesized melody; sounds are short synthesized tones. Audio unlocks on a user gesture, stops scheduling while hidden, limits overlapping voices, and suspends when muted. There are no audio downloads.
+- Keep it saves PNG, editable .clai or geometry-only OBJ files. IndexedDB saves locally and holds the shelf. Older saves are copied to the shelf before their first conversion to solid clay. Download a .clai file for a durable backup or another device.
 
-- Start with one ball. Squish, stretch, grow, smooth, and paint; adjust brush size and mirror strokes along X. Hold Grow to build rounded volume.
-- Shapes opens a ball, egg, pill, and rounded-cube picker. Set Soft blend, pick a primitive, then tap the clay to fuse it in. A translucent preview follows the mouse; touch users can drag to position and release to place. Shape size uses the brush-size slider, selected colors blend into the addition, and Mirror magic adds both sides. Palette changes keep shape placement active. Every addition is undoable.
-- Drag the background to orbit. Two fingers rotate and pinch; a mouse wheel zooms. The pottery wheel keeps turning while every brush is in use, including a stationary held brush. Stylus pressure changes brush strength.
-- Reset smoothly returns the shape to a ball, keeps paint, and creates a single undo step. The animation respects reduced motion. New clay starts another ball; undo restores the previous creation.
-- 24-step undo/redo with a memory ceiling, PNG snapshots, editable `.clai` files and geometry-only OBJ export.
-- IndexedDB stores the current creation and a local shelf. Download `.clai` files to move work between devices or retain backups. No accounts, remote storage, tracking, chat, or external requests are part of the application.
+Keyboard: 1–5 main brushes, 6 Reset, 7 Shapes, 8 Hole, 9 Carve, M Move, 0 recenter, [ and ] brush size, Ctrl/Cmd Z undo, Ctrl/Cmd Shift Z redo. Space or right-drag turns the view.
 
-## Design and compatibility
+## Solid geometry
 
-Inspired by the compact controls, clear selection states, and tactile feedback in Glyphnote's `FlipnoteHeader.tsx` and `FlipnoteToolbar.tsx`, and Diecard's `docs/UI-LAYOUT-AUDIT.md`, `docs/TV-SCALING-REVIEW.md`, and platform handling. The implementation is original. Layout uses the available viewport, safe-area insets, portrait/landscape arrangements, large-screen UI scaling, reduced motion, focus indicators, accessible names, and a defensive fullscreen action.
+The active editor uses an editable signed scalar field on a fixed 65 × 65 × 65 sample lattice. There is no immutable central sphere. Primitive additions use smooth distance-field union; holes and scoops subtract volume. Interior pigment is available when a cut exposes new walls. Growth, local displacement, smoothing and flattening all update the same solid.
 
-The canvas needs WebGL. Three.js r160 supports both WebGL 1 and WebGL 2. The application targets current Safari, Chrome, Edge and Firefox on phones, tablets and computers. Universal physical-device compatibility has not been verified.
+Meshing divides every cell into matching tetrahedra and caches crossing vertices by their global lattice edge. Neighboring cells share vertices, including interior tunnel walls; the extraction has no marching-cubes face ambiguity. Tiny zero values are nudged consistently, the outer lattice boundary remains empty, and the floor bounds the underside. Tests verify closed, oppositely oriented shared edges and actual unobstructed ray paths through tunnels.
+
+This replaces the earlier radial representation, which could not represent tunnels, cavities or overhangs. The finite lattice limits very small details, and unrestricted subtraction does not provide an absolute minimum wall thickness or printability guarantee. Extreme edits can remove clay or separate parts. Reset and undo remain available, including for empty clay. A bounded mesh budget rejects an overly complex stroke and restores its previous solid. Invalid imports are fully validated and meshed before replacing the scene.
+
+Version 3 .clai files store exact field bytes and pigment, preserving tunnels through save/load. Versions 1 and 2 remain readable; legacy radial meshes are sampled into the solid. Exported OBJ geometry includes tunnel walls. Undo owns independent field, color, position and index buffers so topology changes cannot corrupt earlier states.
 
 ## Performance
 
-The mesh uses 10,242 evenly distributed, welded vertices, mutable typed buffers, precomputed adjacency and a spatial hash for localized brush queries. Primitive additions use bounding-sphere rejection, analytic ray intersections where available, and a short distance-field solve only within the affected footprint. Each addition is baked into the same surface: there is no growing list of primitive objects to evaluate, no voxel-grid remeshing, and no increase in rendered clay vertices or triangles. Cached low-detail primitive geometry supplies the placement preview. The view zooms out when needed to keep additions visible.
+Edits operate on local lattice regions. Cached chunk occupancy skips uniformly empty or solid regions during extraction. A reusable typed edge cache avoids duplicate mesh vertices, and distance-field gradients supply smooth normals. The clay is rendered as one indexed mesh; stamp count does not accumulate scene objects or grow the lattice. The geometry ceiling is 64,000 vertices and 128,000 triangles, using 16-bit indices. Head and ball starters use roughly 6,000–8,000 vertices.
 
-Input is coalesced once per animation frame. Normals update only for edited meshes, shadows refresh when geometry changes, painting skips shadow rebuilds, pixel density is capped at 1.75, and the renderer sleeps when idle or hidden. The pottery wheel is off by default. Undo history is capped at 24 states and an approximate 48 MB budget. The primitive stress test records median and p95 CPU time on its runner, independently of rendering; those figures are not device frame-rate measurements.
+Painting reuses surface topology, positions, normals and shadows; only pigment interpolation and the GPU color buffer change. GPU buffers are reused when their sizes match and explicitly disposed when topology size changes. Pointer moves are coalesced per frame. Pixel density is capped at 1.75; the renderer sleeps when idle or hidden, and the wheel starts off. Undo is capped at 24 states and an approximate 48 MB budget, including solid-field data.
 
-## Protected geometry
+The CPU benchmark exercises 180 mixed edits plus mesh extraction and records median/p95 on its runner. It is not a GPU benchmark or a physical-device frame-rate promise.
 
-Clai represents clay as a positive radial height field over a fixed icosphere. Brushes change the distance along each fixed direction; they cannot change vertex connections or move vertices sideways into another face's spherical cone. The spherical triangulation covers every direction once, so the resulting mesh stays a single closed surface without holes, inverted faces, or self-intersections. This is a structural property of the representation rather than a collision check that might miss a fast stroke.
+## Design and compatibility
 
-Radius stays between 0.9216 and 3.2 world units, with an additional limit above the work surface. Neighboring log radii differ by at most 1.15 times their angular separation. The radial lower bound retains a substantial solid core; the angular bound limits narrow protrusions and stretched triangles. Grow and Squish propagate a rounded envelope into nearby clay as needed, making the limits feel soft. Every proposed stroke is constrained before positions are committed. Reset interpolates log radii towards zero, which preserves the same constraints at every animation frame.
+Original interface inspired by the compact, tactile controls in Glyphnote and the viewport and safe-area guidance in Diecard. The seven-button rail remains compact; new tools live in a drawer. Portrait, landscape, short screens, large screens, reduced motion and keyboard focus have explicit styles. The phone view controls keep Move and recenter reachable.
 
-Primitive additions use a polynomial smooth union between the current radial implicit surface and sphere, ellipsoid, capsule, or rounded-box distance fields. The outer intersection is committed through the same protected angular envelope used by Grow. Additions merge into the existing body rather than leaving intersecting mesh objects. The radial representation can broaden joins and fill overhangs to maintain its guarantees; it does not permit detached components or arbitrary tunnels.
+Three.js r160 supports WebGL 1 and WebGL 2. The app targets current Safari, Chrome, Edge and Firefox on phones, tablets and computers. Web Audio is optional and fails quietly if unavailable. No app tracking, remote storage or external runtime assets are used.
 
-This representation deliberately restricts overhangs, tunnels, and extreme thin shapes. Older files are sampled into the protected representation on opening. On the first update, an earlier autosave is kept on the shelf and the studio opens a fresh ball. Protected creations resume normally on later visits. Geometry exports use the protected surface.
+## Validation
 
-## Check
+`npm ci` installs development-only test dependencies. `npm test` covers the active solid geometry, real through-hole raycasts, manifold topology, mirrored edits, center removal, repeated edits, painting, all primitive types after carving, exact save/reopen, topology-safe undo, reset including reduced motion, empty clay, complexity rollback, invalid imports, legacy conversion, view panning, touch release and pinch cancellation, wheel continuity, audio lifecycle and limits, IndexedDB and DOM flows. Legacy radial tests remain to cover older data and conversion helpers. `npm run check` checks module syntax.
 
-`npm ci` installs development-only test dependencies. `npm test` exercises all four primitive fields, 100 repeated primitive additions, smooth joins and pigments, mirrored placement, touch release and pinch cancellation, constant geometry memory, mesh topology, sustained growth, opposing dents, extreme stretches, 2,200 seeded mixed strokes, angular limits, outward face orientation, triangle distortion, protected file conversion, animated reset and undo, every tool on the running wheel, painting, save/import validation, OBJ indices, IndexedDB round trips, and DOM interaction flows. `npm run check` checks JavaScript syntax.
+Browser visual/audio QA was unavailable in this build session. DOM checks substitute the renderer; Three.js tests exercise geometry and raycasting without a GPU. Physical phone/tablet/desktop rendering, touch feel and sound quality still need device validation. No browser preview server or alternative browser-control path was used.
 
-The DOM interaction checks substitute the renderer and do not test WebGL rendering, layout pixels, or actual device input. Browser visual QA was unavailable in the build session. Check the live app on target devices before a broader release, particularly phone rotation, simultaneous touch gestures, storage limits, and GPU context loss.
+## Source
 
-## Files
-
-- `dist/studio.js`: rendering, camera, pointer input, and starter construction.
-- `dist/sculpt.js`: brush math, spatial indexing, history, and file formats.
-- `dist/primitives.js`: distance fields, smooth-union blending, and primitive placement math.
-- `dist/app.js`: UI flows and project state.
-- `dist/storage.js`: transactional browser storage.
+- `dist/volume.js`: editable solid field, meshing, migration and compact persistence.
+- `dist/studio.js`: rendering, camera, pointer input, previews and reset animation.
+- `dist/sculpt.js`: legacy radial helpers, history and file formats.
+- `dist/primitives.js`: primitive distance fields and legacy primitive blending.
+- `dist/audio.js`: optional synthesized music and effects.
+- `dist/app.js`: compact UI flows and project state.
+- `dist/storage.js`: transactional local storage.
 - `dist/style.css`: responsive studio layout.
 
-Third-party licenses are included alongside the vendored library and font.
+Third-party licenses accompany the vendored library and font.

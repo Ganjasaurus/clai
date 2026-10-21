@@ -1,4 +1,5 @@
 // Browser-independent mesh operations. A welded indexed surface avoids brush seams.
+import {encodeVolume,decodeVolume,restoreVolume,meshVolume} from './volume.js';
 export function ellipsoid({center=[0,0,0],scale=[1,1,1],rotation=0,segments=64,rings=42}={}) {
   const count=2+(rings-1)*segments;
   const positions=new Float32Array(count*3);
@@ -220,16 +221,23 @@ export function applyBrush(mesh,{point,normal,tool='push',radius=.42,strength=1,
 export class History {
   constructor(limit=24,maxBytes=48*1024*1024){this.limit=limit;this.maxBytes=maxBytes;this.states=[];this.index=-1;}
   push(state){this.states.splice(this.index+1);this.states.push(state);this.index=this.states.length-1;while(this.states.length>2&&(this.states.length>this.limit||this.bytes>this.maxBytes)){this.states.shift();this.index--;}}
-  get bytes(){return this.states.reduce((sum,s)=>sum+s.meshes.reduce((n,m)=>n+m.positions.byteLength+m.colors.byteLength+(m.indices?.byteLength??0),0),0);}
+  get bytes(){return this.states.reduce((sum,s)=>sum+(s.volume?.values.byteLength??0)+(s.volume?.pigment.byteLength??0)+s.meshes.reduce((n,m)=>n+m.positions.byteLength+m.colors.byteLength+(m.indices?.byteLength??0),0),0);}
   get canUndo(){return this.index>0;}
   get canRedo(){return this.index<this.states.length-1;}
   undo(){return this.canUndo?this.states[--this.index]:null;}
   redo(){return this.canRedo?this.states[++this.index]:null;}
 }
 
-export function encodeProject(snapshot){return {format:'clai',version:2,name:snapshot.name,surface:snapshot.surface,meshes:snapshot.meshes.map(m=>({name:m.name,positions:Array.from(m.positions,v=>Math.round(v*100000)/100000),colors:Array.from(m.colors,v=>Math.round(v*10000)/10000),indices:Array.from(m.indices)}))};}
+export function encodeProject(snapshot){
+  if(snapshot.surface==='solid-clay-v1'&&snapshot.volume)return {format:'clai',version:3,name:snapshot.name,surface:snapshot.surface,volume:encodeVolume(snapshot.volume)};
+  return {format:'clai',version:2,name:snapshot.name,surface:snapshot.surface,meshes:snapshot.meshes.map(m=>({name:m.name,positions:Array.from(m.positions,v=>Math.round(v*100000)/100000),colors:Array.from(m.colors,v=>Math.round(v*10000)/10000),indices:Array.from(m.indices)}))};
+}
 
 export function decodeProject(data){
+  if(data?.format==='clai'&&data.version===3){
+    const volume=decodeVolume(data.volume),field=restoreVolume(volume);
+    return {name:String(data.name??'My little creation').slice(0,40),surface:'solid-clay-v1',volume,meshes:[meshVolume(field)]};
+  }
   if(!data||data.format!=='clai'||![1,2].includes(data.version)||!Array.isArray(data.meshes)||data.meshes.length<1||data.meshes.length>32)throw new Error('This file is not a clai creation.');
   let vertices=0;
   const meshes=data.meshes.map((m,i)=>{

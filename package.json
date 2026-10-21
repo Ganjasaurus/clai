@@ -6,7 +6,7 @@
   "scripts": {
     "build": "npm run check",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check dist/app.js && node --check dist/sculpt.js && node --check dist/studio.js && node --check dist/primitives.js"
+    "check": "node --check dist/app.js && node --check dist/sculpt.js && node --check dist/studio.js && node --check dist/primitives.js && node --check dist/volume.js && node --check dist/audio.js"
   },
   "devDependencies": {
     "fake-indexeddb": "6.2.6",
